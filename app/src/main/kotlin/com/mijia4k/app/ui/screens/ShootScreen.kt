@@ -452,32 +452,40 @@ private fun formatDuration(totalSeconds: Int): String {
     return "%02d:%02d".format(m, s)
 }
 
-/**
- * Picks a handful of relevant fields to show for the current mode out of
- * whatever the camera's settings dump contains. The real key names this
- * camera uses aren't confirmed yet, so this matches loosely by substring
- * against a shortlist of plausible names per field.
- */
-private fun liveInfoFor(mode: String, settings: Map<String, String>): List<Pair<String, String>> {
-    fun find(vararg candidates: String): Pair<String, String>? {
-        for (c in candidates) {
-            val hit = settings.entries.firstOrNull { it.key.contains(c, ignoreCase = true) }
-            if (hit != null) return hit.key.replace('_', ' ').replaceFirstChar { it.uppercase() } to hit.value
-        }
-        return null
-    }
+// Key -> display label, matching the exact field keys used in
+// SettingsScreen.kt's per-mode field lists (transcribed from real screen
+// recordings of the stock app). 2-3 of each mode's real fields, picked as
+// the ones most useful to glance at live.
+private val LIVE_INFO_LABELS = mapOf(
+    "resolution" to "Resolution",
+    "quality" to "Quality",
+    "speed" to "Speed",
+    "video_length" to "Length",
+    "interval" to "Interval",
+    "iso" to "ISO",
+    "shutter" to "Shutter",
+    "metering_mode" to "Metering",
+    "countdown" to "Countdown",
+    "burst_rate" to "Rate",
+    "aspect_ratio" to "Ratio",
+)
 
-    val wanted = when {
-        mode == "photo" -> listOf("iso", "shutter", "meter")
-        mode.contains("slow") -> listOf("slow", "fps", "resolution")
-        mode.contains("time_lapse") -> listOf("interval", "resolution")
-        mode.contains("loop") -> listOf("loop", "resolution")
-        mode.contains("burst") -> listOf("burst", "iso")
-        mode.contains("timer") -> listOf("timer", "delay")
-        mode.contains("video") || mode.contains("record") -> listOf("resolution", "iso")
-        else -> listOf("iso", "resolution")
-    }
-    return wanted.mapNotNull { find(it) }
+private val LIVE_INFO_KEYS_BY_MODE = mapOf(
+    "normal_record" to listOf("resolution", "quality"),
+    "time_lapse_record" to listOf("interval", "resolution"),
+    "slow_motion_record" to listOf("speed", "quality"),
+    "loop_record" to listOf("video_length", "resolution"),
+    "video_photo" to listOf("interval", "resolution"),
+    "photo" to listOf("iso", "shutter", "metering_mode"),
+    "self_timer" to listOf("countdown", "iso"),
+    "burst" to listOf("burst_rate", "iso"),
+    "time_lapse_photo" to listOf("interval", "iso"),
+)
+
+/** Picks the 2-3 most relevant fields to show for the current mode, using the real (transcribed) field keys. */
+private fun liveInfoFor(mode: String, settings: Map<String, String>): List<Pair<String, String>> {
+    val keys = LIVE_INFO_KEYS_BY_MODE[mode] ?: listOf("resolution", "quality")
+    return keys.mapNotNull { key -> settings[key]?.let { value -> (LIVE_INFO_LABELS[key] ?: key) to value } }
 }
 
 /** Best-effort parse of a msg_id=3 (GET_ALL_CURRENT_SETTINGS) reply into a flat key/value map. */

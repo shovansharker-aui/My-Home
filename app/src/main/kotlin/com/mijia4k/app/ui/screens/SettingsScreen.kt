@@ -1,8 +1,6 @@
 package com.mijia4k.app.ui.screens
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,10 +36,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.CameraSession
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 private data class SettingField(val label: String, val key: String, val isToggle: Boolean = false)
 
-// Confirmed real, from the stock app's Time Lapse Video settings screen.
+// Every field set below, including field order and current default values, is
+// transcribed directly from screen recordings of the real Mi Home app for
+// this camera (all 9 modes + the general Camera Settings page were
+// captured). The *labels* and *order* are exact. The *key* strings sent to
+// the camera's GET_SETTING/SET_SETTING commands are still our own guesses —
+// the real protocol doesn't document its key names anywhere public — so a
+// field showing "camera reported no options" means the guessed key doesn't
+// match this firmware's actual name for it, not that the setting is fake.
+
+private val VIDEO_FIELDS = listOf(
+    SettingField("Color", "color_mode"),
+    SettingField("Resolution", "resolution"),
+    SettingField("Quality", "quality"),
+    SettingField("Mic Mute", "mic_mute", isToggle = true),
+    SettingField("Stamp", "stamp"),
+    SettingField("Auto Record", "auto_record", isToggle = true),
+    SettingField("Metering Mode", "metering_mode"),
+    SettingField("EV", "ev"),
+    SettingField("WB", "wb"),
+)
 private val TIME_LAPSE_VIDEO_FIELDS = listOf(
     SettingField("Interval", "interval"),
     SettingField("Video Length", "video_length"),
@@ -54,70 +72,91 @@ private val TIME_LAPSE_VIDEO_FIELDS = listOf(
     SettingField("EV", "ev"),
     SettingField("WB", "wb"),
 )
-
-// Everything below is inferred from that one confirmed set, not verified —
-// if you can screenshot the settings screen for these modes from the stock
-// app too, these can be made exact instead of inferred.
-private val VIDEO_FIELDS = listOf(
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Color", "color_mode"),
-    SettingField("Stamp", "stamp"),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
-)
 private val SLOW_MOTION_FIELDS = listOf(
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
+    SettingField("Speed", "speed"),
     SettingField("Color", "color_mode"),
-    SettingField("Stamp", "stamp"),
+    SettingField("Quality", "quality"),
+    SettingField("Auto Record", "auto_record", isToggle = true),
+    SettingField("Metering Mode", "metering_mode"),
     SettingField("EV", "ev"),
     SettingField("WB", "wb"),
 )
 private val LOOP_RECORD_FIELDS = listOf(
-    SettingField("Loop Duration", "loop_duration"),
+    SettingField("Video Length", "video_length"),
+    SettingField("Color", "color_mode"),
     SettingField("Resolution", "resolution"),
     SettingField("Quality", "quality"),
-    SettingField("Color", "color_mode"),
+    SettingField("Mic Mute", "mic_mute", isToggle = true),
     SettingField("Stamp", "stamp"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
-)
-private val PHOTO_FIELDS = listOf(
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Color", "color_mode"),
+    SettingField("Auto Record", "auto_record", isToggle = true),
     SettingField("Metering Mode", "metering_mode"),
     SettingField("EV", "ev"),
     SettingField("WB", "wb"),
 )
-private val TIMER_FIELDS = listOf(
-    SettingField("Countdown", "timer_delay"),
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Color", "color_mode"),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
-)
-private val BURST_FIELDS = listOf(
-    SettingField("Burst Count", "burst_count"),
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Color", "color_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
-)
-private val TIME_LAPSE_PHOTO_FIELDS = listOf(
+private val VIDEO_PHOTO_FIELDS = listOf(
     SettingField("Interval", "interval"),
     SettingField("Color", "color_mode"),
     SettingField("Resolution", "resolution"),
     SettingField("Quality", "quality"),
+    SettingField("Mic Mute", "mic_mute", isToggle = true),
     SettingField("Stamp", "stamp"),
+    SettingField("Auto Record", "auto_record", isToggle = true),
     SettingField("Metering Mode", "metering_mode"),
     SettingField("EV", "ev"),
     SettingField("WB", "wb"),
+)
+private val PHOTO_FIELDS = listOf(
+    SettingField("Aspect Ratio", "aspect_ratio"),
+    SettingField("Stamp", "stamp"),
+    SettingField("Metering Mode", "metering_mode"),
+    SettingField("EV", "ev"),
+    SettingField("Shutter", "shutter"),
+    SettingField("ISO", "iso"),
+    SettingField("RAW", "raw", isToggle = true),
+    SettingField("WB", "wb"),
+    SettingField("Color", "color_mode"),
+)
+private val TIMER_FIELDS = listOf(
+    SettingField("Countdown", "countdown"),
+    SettingField("Aspect Ratio", "aspect_ratio"),
+    SettingField("Stamp", "stamp"),
+    SettingField("Metering Mode", "metering_mode"),
+    SettingField("EV", "ev"),
+    SettingField("ISO", "iso"),
+    SettingField("WB", "wb"),
+    SettingField("Color", "color_mode"),
+)
+private val BURST_FIELDS = listOf(
+    SettingField("Rate", "burst_rate"),
+    SettingField("Aspect Ratio", "aspect_ratio"),
+    SettingField("Stamp", "stamp"),
+    SettingField("Metering Mode", "metering_mode"),
+    SettingField("EV", "ev"),
+    SettingField("ISO", "iso"),
+    SettingField("WB", "wb"),
+    SettingField("Color", "color_mode"),
+)
+private val TIME_LAPSE_PHOTO_FIELDS = listOf(
+    SettingField("Interval", "interval"),
+    SettingField("Aspect Ratio", "aspect_ratio"),
+    SettingField("Stamp", "stamp"),
+    SettingField("Metering Mode", "metering_mode"),
+    SettingField("EV", "ev"),
+    SettingField("ISO", "iso"),
+    SettingField("WB", "wb"),
+    SettingField("Color", "color_mode"),
+)
+
+// General device settings ("Camera Settings" from the Settings hub) — not
+// tied to any shooting mode.
+private val GENERAL_FIELDS = listOf(
+    SettingField("Video Standard", "video_standard"),
+    SettingField("Beep Volume", "beep_volume"),
+    SettingField("Default Mode", "default_mode"),
+    SettingField("Rotate", "rotate", isToggle = true),
+    SettingField("Auto Screen Lock", "auto_screen_lock"),
+    SettingField("Auto Power Off", "auto_power_off"),
+    SettingField("Wi-Fi Auto On", "wifi_auto_on", isToggle = true),
 )
 
 private val MODE_LABELS = mapOf(
@@ -133,15 +172,15 @@ private val MODE_LABELS = mapOf(
 )
 
 private fun fieldsFor(modeValue: String): List<SettingField> = when (modeValue) {
-    "time_lapse_record" -> TIME_LAPSE_VIDEO_FIELDS
     "normal_record" -> VIDEO_FIELDS
+    "time_lapse_record" -> TIME_LAPSE_VIDEO_FIELDS
     "slow_motion_record" -> SLOW_MOTION_FIELDS
     "loop_record" -> LOOP_RECORD_FIELDS
+    "video_photo" -> VIDEO_PHOTO_FIELDS
     "photo" -> PHOTO_FIELDS
     "self_timer" -> TIMER_FIELDS
     "burst" -> BURST_FIELDS
     "time_lapse_photo" -> TIME_LAPSE_PHOTO_FIELDS
-    "video_photo" -> VIDEO_FIELDS
     else -> PHOTO_FIELDS
 }
 
@@ -154,93 +193,80 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
 
     var values by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var pickerField by remember { mutableStateOf<SettingField?>(null) }
-    var showRawDump by remember { mutableStateOf(false) }
-    var rawDump by remember { mutableStateOf("") }
+    var showGeneral by remember { mutableStateOf(false) }
 
-    fun refreshValues() {
+    fun refreshValues(forFields: List<SettingField>, into: (Map<String, String>) -> Unit) {
         scope.launch {
             val map = mutableMapOf<String, String>()
-            for (f in fields) {
+            for (f in forFields) {
                 CameraSession.client.getSetting(f.key).getOrNull()?.optString("param")?.let { map[f.key] = it }
             }
-            values = map
+            into(map)
         }
     }
 
-    LaunchedEffect(modeValue) { refreshValues() }
+    LaunchedEffect(modeValue, showGeneral) {
+        refreshValues(if (showGeneral) GENERAL_FIELDS else fields) { values = it }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(if (showGeneral) "Camera Settings" else "Settings") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { if (showGeneral) showGeneral = false else onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
             )
         },
     ) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-            item {
-                ListItem(
-                    headlineContent = { Text("Camera Settings") },
-                    trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
-                    modifier = Modifier.clickable { showRawDump = !showRawDump },
-                )
-                HorizontalDivider(thickness = 8.dp)
-            }
-
-            if (showRawDump) {
-                item { RawDumpSection() }
-            }
-
-            item {
-                Text(
-                    "${MODE_LABELS[modeValue] ?: modeValue} Parameter Settings",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
-            items(fields) { field ->
-                val value = values[field.key] ?: "..."
-                if (field.isToggle) {
+        if (showGeneral) {
+            GeneralSettingsList(
+                padding = padding,
+                values = values,
+                onFieldTap = { pickerField = it },
+                onToggle = { field, checked ->
+                    scope.launch {
+                        CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
+                        refreshValues(GENERAL_FIELDS) { values = it }
+                    }
+                },
+                onOpenDeviceInfo = { /* shown inline below the list */ },
+            )
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+                item {
                     ListItem(
-                        headlineContent = { Text(field.label) },
-                        trailingContent = {
-                            Switch(
-                                checked = value == "on" || value == "1" || value == "true",
-                                onCheckedChange = { checked ->
-                                    scope.launch {
-                                        CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
-                                        refreshValues()
-                                    }
-                                },
-                            )
-                        },
+                        headlineContent = { Text("Camera Settings") },
+                        trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
+                        modifier = Modifier.clickable { showGeneral = true },
                     )
-                } else {
-                    ListItem(
-                        headlineContent = { Text(field.label) },
-                        trailingContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Icon(Icons.Filled.ChevronRight, contentDescription = null)
-                            }
-                        },
-                        modifier = Modifier.clickable { pickerField = field },
+                    HorizontalDivider(thickness = 8.dp)
+                }
+
+                item {
+                    Text(
+                        "${MODE_LABELS[modeValue] ?: modeValue} Parameter Settings",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
                     )
                 }
-                HorizontalDivider()
-            }
+                items(fields) { field -> SettingRow(field, values[field.key], onTap = { pickerField = field }, onToggle = { checked ->
+                    scope.launch {
+                        CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
+                        refreshValues(fields) { values = it }
+                    }
+                }) }
 
-            item {
-                ListItem(
-                    headlineContent = { Text("Diagnostics (advanced/debug)") },
-                    trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
-                    modifier = Modifier.clickable(onClick = onOpenDiagnostics).padding(top = 24.dp),
-                )
+                item {
+                    ListItem(
+                        headlineContent = { Text("Diagnostics (advanced/debug)") },
+                        trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
+                        modifier = Modifier.clickable(onClick = onOpenDiagnostics).padding(top = 24.dp),
+                    )
+                }
             }
         }
     }
@@ -253,9 +279,111 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 scope.launch {
                     CameraSession.client.setSetting(field.key, picked)
                     pickerField = null
-                    refreshValues()
+                    refreshValues(if (showGeneral) GENERAL_FIELDS else fields) { values = it }
                 }
             },
+        )
+    }
+}
+
+@Composable
+private fun SettingRow(field: SettingField, value: String?, onTap: () -> Unit, onToggle: (Boolean) -> Unit) {
+    val displayValue = value ?: "..."
+    if (field.isToggle) {
+        ListItem(
+            headlineContent = { Text(field.label) },
+            trailingContent = {
+                Switch(checked = displayValue == "on" || displayValue == "1" || displayValue == "true", onCheckedChange = onToggle)
+            },
+        )
+    } else {
+        ListItem(
+            headlineContent = { Text(field.label) },
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(displayValue, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(Icons.Filled.ChevronRight, contentDescription = null)
+                }
+            },
+            modifier = Modifier.clickable(onClick = onTap),
+        )
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun GeneralSettingsList(
+    padding: androidx.compose.foundation.layout.PaddingValues,
+    values: Map<String, String>,
+    onFieldTap: (SettingField) -> Unit,
+    onToggle: (SettingField, Boolean) -> Unit,
+    onOpenDeviceInfo: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var deviceInfo by remember { mutableStateOf("") }
+    var storage by remember { mutableStateOf("") }
+    var showRestoreConfirm by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        deviceInfo = CameraSession.client.getDeviceInfo().fold({ it.toString(2) }, { "error: ${it.message}" })
+        CameraSession.client.getStorageSpaceBytes().getOrNull()?.let {
+            storage = "%.1fG total".format(it / 1024.0 / 1024.0 / 1024.0)
+        }
+    }
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+        item {
+            Text(
+                "Camera Parameter",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+        items(GENERAL_FIELDS) { field ->
+            SettingRow(field, values[field.key], onTap = { onFieldTap(field) }, onToggle = { onToggle(field, it) })
+        }
+        item {
+            ListItem(
+                headlineContent = { Text("SD card") },
+                trailingContent = { Text(storage.ifBlank { "..." }, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            )
+            HorizontalDivider()
+        }
+
+        item {
+            Text(
+                "Device Info",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+        item {
+            Text(
+                deviceInfo.ifBlank { "Loading..." },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+        }
+        item {
+            // Deliberately not wired to a real command: there's no
+            // confirmed protocol message for "restore defaults", and
+            // guessing at one on a real device that resets/reboots the
+            // camera isn't a safe thing to gamble on.
+            ListItem(
+                headlineContent = { Text("Restore camera settings") },
+                modifier = Modifier.clickable { showRestoreConfirm = true }.padding(top = 8.dp),
+            )
+        }
+    }
+
+    if (showRestoreConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestoreConfirm = false },
+            confirmButton = { TextButton(onClick = { showRestoreConfirm = false }) { Text("OK") } },
+            title = { Text("Not available yet") },
+            text = { Text("This app doesn't know the camera's real \"restore defaults\" command yet, so this button is intentionally inert rather than guessing at one on your actual hardware.") },
         )
     }
 }
@@ -276,7 +404,7 @@ private fun OptionPickerDialog(field: SettingField, onDismiss: () -> Unit, onPic
             when {
                 options == null -> CircularProgressIndicator()
                 options!!.isEmpty() -> Text("Camera reported no options for \"${field.key}\" (guessed key name — may not match this firmware).")
-                else -> Column {
+                else -> androidx.compose.foundation.layout.Column {
                     for (opt in options!!) {
                         Text(
                             opt,
@@ -287,29 +415,4 @@ private fun OptionPickerDialog(field: SettingField, onDismiss: () -> Unit, onPic
             }
         },
     )
-}
-
-@Composable
-private fun RawDumpSection() {
-    val scope = rememberCoroutineScope()
-    var allSettings by remember { mutableStateOf("") }
-    var deviceInfo by remember { mutableStateOf("") }
-
-    LaunchedEffect(Unit) {
-        allSettings = CameraSession.client.getAllCurrentSettings().fold({ it.toString(2) }, { "error: ${it.message}" })
-        deviceInfo = CameraSession.client.getDeviceInfo().fold({ it.toString(2) }, { "error: ${it.message}" })
-    }
-
-    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-        Text("Device info", style = MaterialTheme.typography.labelLarge)
-        Text(deviceInfo, style = MaterialTheme.typography.bodySmall)
-        Text("All current settings (raw)", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
-        Text(allSettings, style = MaterialTheme.typography.bodySmall)
-        Button(onClick = {
-            scope.launch {
-                allSettings = CameraSession.client.getAllCurrentSettings().fold({ it.toString(2) }, { "error: ${it.message}" })
-            }
-        }) { Text("Refresh") }
-        HorizontalDivider(thickness = 8.dp, modifier = Modifier.padding(top = 16.dp))
-    }
 }
