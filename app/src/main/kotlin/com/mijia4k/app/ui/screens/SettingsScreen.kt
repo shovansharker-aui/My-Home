@@ -330,15 +330,60 @@ private fun GeneralSettingsList(
     var deviceInfo by remember { mutableStateOf("") }
     var storage by remember { mutableStateOf("") }
     var showRestoreConfirm by remember { mutableStateOf(false) }
+    var allSettingsDump by remember { mutableStateOf("") }
+    var modeSettingsDump by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         deviceInfo = CameraSession.client.getDeviceInfo().fold({ it.toString(2) }, { "error: ${it.message}" })
         CameraSession.client.getStorageSpaceBytes().getOrNull()?.let {
             storage = "%.1fG total".format(it / 1024.0 / 1024.0 / 1024.0)
         }
+        // GET_SETTING/GET_SINGLE_SETTING_OPTIONS (which take a "type" key)
+        // are failing with the same error code regardless of key name —
+        // that rules out individually-wrong key guesses and points at
+        // something structural about those two specific commands. These two
+        // take no "type" argument at all, so they're the next thing to
+        // check: if they succeed, their raw response should show the real
+        // setting key names directly instead of guessing them one at a time.
+        allSettingsDump = CameraSession.client.getAllCurrentSettings().fold({ it.toString(2) }, { "error: ${it.message}" })
+        modeSettingsDump = CameraSession.client.getCurrentModeSettings().fold({ it.toString(2) }, { "error: ${it.message}" })
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+        item {
+            Text(
+                "Protocol Diagnostics",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+        item {
+            Text(
+                "Raw GET_ALL_CURRENT_SETTINGS (msg_id 3):",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Text(
+                allSettingsDump.ifBlank { "Loading..." },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+        item {
+            Text(
+                "Raw GET_CURRENT_MODE_SETTINGS (msg_id 2053):",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            Text(
+                modeSettingsDump.ifBlank { "Loading..." },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            HorizontalDivider(thickness = 8.dp, modifier = Modifier.padding(top = 16.dp))
+        }
+
         item {
             Text(
                 "Camera Parameter",
