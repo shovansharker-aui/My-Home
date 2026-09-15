@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -285,6 +286,17 @@ private fun GridCell(
                 tint = Color.White,
                 modifier = Modifier.align(Alignment.Center).size(32.dp),
             )
+        }
+        if (item.localFile == null) {
+            // Not synced into local storage yet — thumbnail is loading
+            // straight from the camera over the (slow) hotspot.
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(4.dp).size(18.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = Color.White)
+            }
         }
         if (selectionMode) {
             Checkbox(checked = selected, onCheckedChange = { onTap() }, modifier = Modifier.align(Alignment.TopEnd))

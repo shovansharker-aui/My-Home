@@ -195,18 +195,24 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     var pickerField by remember { mutableStateOf<SettingField?>(null) }
     var showGeneral by remember { mutableStateOf(false) }
 
-    fun refreshValues(forFields: List<SettingField>, into: (Map<String, String>) -> Unit) {
+    // Each guessed key that the camera doesn't recognize costs a full
+    // ~5s read timeout, so a batch of 10 fields fetched one after another
+    // (the control socket only allows one in-flight command) could block
+    // the whole list from appearing for the better part of a minute.
+    // Update `values` after each field resolves instead of waiting for the
+    // whole batch, so rows populate as their answers come in.
+    fun refreshValues(forFields: List<SettingField>) {
         scope.launch {
-            val map = mutableMapOf<String, String>()
             for (f in forFields) {
-                CameraSession.client.getSetting(f.key).getOrNull()?.optString("param")?.let { map[f.key] = it }
+                val v = CameraSession.client.getSetting(f.key).getOrNull()?.optString("param")
+                if (!v.isNullOrEmpty()) values = values + (f.key to v)
             }
-            into(map)
         }
     }
 
     LaunchedEffect(modeValue, showGeneral) {
-        refreshValues(if (showGeneral) GENERAL_FIELDS else fields) { values = it }
+        values = emptyMap()
+        refreshValues(if (showGeneral) GENERAL_FIELDS else fields)
     }
 
     Scaffold(
@@ -229,7 +235,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 onToggle = { field, checked ->
                     scope.launch {
                         CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
-                        refreshValues(GENERAL_FIELDS) { values = it }
+                        refreshValues(GENERAL_FIELDS)
                     }
                 },
                 onOpenDeviceInfo = { /* shown inline below the list */ },
@@ -256,7 +262,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 items(fields) { field -> SettingRow(field, values[field.key], onTap = { pickerField = field }, onToggle = { checked ->
                     scope.launch {
                         CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
-                        refreshValues(fields) { values = it }
+                        refreshValues(fields)
                     }
                 }) }
 
@@ -279,7 +285,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 scope.launch {
                     CameraSession.client.setSetting(field.key, picked)
                     pickerField = null
-                    refreshValues(if (showGeneral) GENERAL_FIELDS else fields) { values = it }
+                    refreshValues(if (showGeneral) GENERAL_FIELDS else fields)
                 }
             },
         )
@@ -390,22 +396,33 @@ private fun GeneralSettingsList(
 
 @Composable
 private fun OptionPickerDialog(field: SettingField, onDismiss: () -> Unit, onPicked: (String) -> Unit) {
+    // loading = null, resolved (success or failure) = non-null list. A
+    // previous version reassigned this back to null on failure, which is
+    // indistinguishable from "still loading" — the dialog spun forever on
+    // any timeout/error instead of ever showing the "no options" message.
     var options by remember { mutableStateOf<List<String>?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(field.key) {
-        options = CameraSession.client.getSettingOptions(field.key).getOrNull()?.let { json ->
+        val result = CameraSession.client.getSettingOptions(field.key)
+        errorMessage = result.exceptionOrNull()?.message
+        options = result.getOrNull()?.let { json ->
             json.optJSONArray("param")?.let { arr -> (0 until arr.length()).mapNotNull { arr.opt(it)?.toString() } }
-        }
+        } ?: emptyList()
     }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         title = { Text(field.label) },
         text = {
+            val current = options
             when {
-                options == null -> CircularProgressIndicator()
-                options!!.isEmpty() -> Text("Camera reported no options for \"${field.key}\" (guessed key name — may not match this firmware).")
+                current == null -> CircularProgressIndicator()
+                current.isEmpty() -> Text(
+                    "Camera reported no options for \"${field.key}\"" +
+                        (errorMessage?.let { ": $it" } ?: " (guessed key name — may not match this firmware)."),
+                )
                 else -> androidx.compose.foundation.layout.Column {
-                    for (opt in options!!) {
+                    for (opt in current) {
                         Text(
                             opt,
                             modifier = Modifier.fillMaxWidth().clickable { onPicked(opt) }.padding(vertical = 12.dp),

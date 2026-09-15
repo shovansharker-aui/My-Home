@@ -120,6 +120,10 @@ fun ShootScreen(
     var recordSeconds by remember { mutableStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
     var currentMode by remember { mutableStateOf(CAMERA_MODES.first { it.value == "time_lapse_record" }) }
+    // What the camera itself last reported for camera_mode, whether or not
+    // it matches one of our guessed CAMERA_MODES values — shown so a wrong
+    // guess is visible instead of silently invisible.
+    var cameraReportedMode by remember { mutableStateOf<String?>(null) }
     var showModeDialog by remember { mutableStateOf(false) }
     var liveInfo by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showGrid by remember { mutableStateOf(false) }
@@ -148,12 +152,23 @@ fun ShootScreen(
     }
 
     // Poll the camera's own settings while this screen is open so the info
-    // row (and whatever the camera reports for the current mode) stays
-    // live, mirroring what its own display would show.
+    // row stays live, and — importantly — so the highlighted mode reflects
+    // what the camera actually reports rather than what we last tapped.
+    // Tapping a mode sends the command but does NOT update `currentMode`
+    // directly; this loop is the single source of truth for what mode is
+    // "selected" in the UI, so a rejected/no-effect command just doesn't
+    // flip the highlight instead of showing a mode that isn't really active.
     LaunchedEffect(connected) {
         while (connected) {
             CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
                 val map = parseSettingsMap(json)
+                map["camera_mode"]?.let { raw ->
+                    cameraReportedMode = raw
+                    CAMERA_MODES.firstOrNull { it.value == raw }?.let { matched ->
+                        currentMode = matched
+                        CameraSession.currentModeValue = matched.value
+                    }
+                }
                 liveInfo = liveInfoFor(currentMode.value, map)
             }
             delay(3000)
@@ -306,6 +321,17 @@ fun ShootScreen(
                         .padding(4.dp)
                         .pointerInput(Unit) { detectTapGestures(onTap = { showModeDialog = true }) },
                 )
+                // The camera's own camera_mode value doesn't match any of
+                // our guessed CAMERA_MODES strings — surfaced so the real
+                // value is visible instead of silently falling back to
+                // whatever was last confirmed.
+                if (cameraReportedMode != null && CAMERA_MODES.none { it.value == cameraReportedMode }) {
+                    Text(
+                        " (camera reports: \"$cameraReportedMode\")",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
 
             if (liveInfo.isNotEmpty()) {
@@ -399,10 +425,20 @@ fun ShootScreen(
                                 .padding(12.dp)
                                 .pointerInput(mode) {
                                     detectTapGestures(onTap = {
-                                        runCommand("Set mode ${mode.label}") { CameraSession.client.setCameraMode(mode.value) }
-                                        currentMode = mode
-                                        CameraSession.currentModeValue = mode.value
                                         showModeDialog = false
+                                        // Don't flip the highlighted mode
+                                        // optimistically — send the command,
+                                        // then let the settings-poll loop
+                                        // above confirm (or not) what the
+                                        // camera actually switched to.
+                                        scope.launch {
+                                            val result = CameraSession.client.setCameraMode(mode.value)
+                                            status = if (result.isSuccess) {
+                                                "Set mode ${mode.label} sent — confirming with camera..."
+                                            } else {
+                                                "Set mode ${mode.label} failed: ${result.exceptionOrNull()?.message}"
+                                            }
+                                        }
                                     })
                                 },
                             horizontalAlignment = Alignment.CenterHorizontally,
