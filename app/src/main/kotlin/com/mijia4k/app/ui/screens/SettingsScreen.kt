@@ -188,15 +188,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                     trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
                     modifier = Modifier.clickable { showRawDump = !showRawDump },
                 )
-                HorizontalDivider()
-            }
-            item {
-                // This camera has no gimbal — shown (disabled) purely to
-                // match the stock app's layout.
-                ListItem(
-                    headlineContent = { Text("Handheld Gimbal Settings", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)) },
-                    trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)) },
-                )
                 HorizontalDivider(thickness = 8.dp)
             }
 

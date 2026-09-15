@@ -1,10 +1,13 @@
 package com.mijia4k.app.ui.screens
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +57,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -311,6 +315,10 @@ private fun MediaPagerViewer(
     val pagerState = rememberPagerState(initialPage = startIndex) { items.size }
     var showInfo by remember { mutableStateOf(false) }
 
+    // System back (button or gesture) should close this viewer and land back
+    // on the grid, not pop the whole Gallery screen off the nav stack.
+    BackHandler(onBack = onClose)
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             val item = items[page]
@@ -425,9 +433,23 @@ private fun ZoomableImage(model: Any, imageLoader: ImageLoader, contentDescripti
                 translationY = offset.y,
             )
             .pointerInput(model) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 5f)
-                    offset = if (scale <= 1f) Offset.Zero else offset + pan
+                // A plain detectTransformGestures() consumes single-finger
+                // pans unconditionally, which starves the parent Pager of
+                // the drag events it needs to swipe between photos — only
+                // consume here when there's an actual pinch or the image is
+                // already zoomed in, so an unzoomed single-finger swipe
+                // passes through to the Pager untouched.
+                awaitEachGesture {
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoomChange = event.calculateZoom()
+                        val panChange = event.calculatePan()
+                        if (zoomChange != 1f || scale > 1f) {
+                            scale = (scale * zoomChange).coerceIn(1f, 5f)
+                            offset = if (scale <= 1f) Offset.Zero else offset + panChange
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             },
     )
