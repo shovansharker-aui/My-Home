@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple lens/shutter glyph, kept within the 66dp safe zone for adaptive icons -->
+    <path
+        android:fillColor="#FF6F00"
+        android:pathData="M54,29 A25,25 0 1 1 53.99,29 Z" />
+    <path
+        android:fillColor="#1B1B1F"
+        android:pathData="M54,40 A14,14 0 1 1 53.99,40 Z" />
+    <path
+        android:fillColor="#FFC107"
+        android:pathData="M54,46 A8,8 0 1 1 53.99,46 Z" />
+</vector>
