@@ -30,6 +30,9 @@ class CameraHttpClient(
         val sizeBytes: Long?,
     ) {
         val url: String get() = "http://${CameraEndpoints.HOST}$path"
+        private val extension get() = name.substringAfterLast('.', "").lowercase()
+        val isVideo: Boolean get() = extension in VIDEO_EXTENSIONS
+        val isImage: Boolean get() = extension in IMAGE_EXTENSIONS
     }
 
     // Matches one listing row: the link (name/href) and, for files, the
@@ -84,5 +87,7 @@ class CameraHttpClient(
 
     companion object {
         const val DCIM_ROOT = "/DCIM/"
+        val VIDEO_EXTENSIONS = setOf("mp4", "mov", "avi", "ts")
+        val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif")
     }
 }
