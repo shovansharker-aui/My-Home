@@ -39,16 +39,22 @@ jobs:
 
       # Every push to main republishes this rolling release so the latest
       # APK is always one click away in the repo's Releases section,
-      # without needing to remember to tag a version first.
+      # without needing to remember to tag a version first. Uses the gh CLI
+      # directly (delete-then-recreate) rather than softprops/action-gh-release
+      # for this step — that action has a bug where re-updating an existing
+      # "latest" release across runs silently fails to actually attach the
+      # new asset (confirmed: the release stayed on a stale commit/APK).
       - name: Publish rolling "latest" release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: "Latest build (main)"
-          prerelease: true
-          body: "Automatically built from the latest commit on main (${{ github.sha }}). Not a tagged version — see other releases for stable, tagged versions."
-          files: app/build/outputs/apk/release/*.apk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create latest app/build/outputs/apk/release/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Latest build (main)" \
+            --notes "Automatically built from the latest commit on main (${{ github.sha }}). Not a tagged version — see other releases for stable, tagged versions." \
+            --prerelease
 
       # A pushed version tag (vX.Y.Z) still cuts a proper, permanent release.
       - name: Create tagged release
