@@ -59,11 +59,14 @@ fun ConnectScreen(
     fun connect() {
         state = ConnState.CHECKING
         errorMessage = null
-        // The camera's hotspot has no internet, so Android will otherwise
-        // route our traffic through mobile data / another Wi-Fi instead —
-        // pin this app's networking to the camera's Wi-Fi explicitly.
-        NetworkBinder.bindToCameraWifi(context)
         scope.launch {
+            // The camera's hotspot has no internet, so Android will
+            // otherwise route our traffic through mobile data / another
+            // Wi-Fi instead — pin this app's networking to the camera's
+            // Wi-Fi explicitly, and wait for the bind to actually apply
+            // before opening the control socket (opening it immediately
+            // races the async network callback and loses).
+            NetworkBinder.bindToCameraWifi(context)
             val result = CameraSession.connect()
             if (result.isSuccess) {
                 state = ConnState.CONNECTED

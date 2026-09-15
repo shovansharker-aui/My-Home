@@ -93,7 +93,13 @@ class CameraHttpClient(
             walk(root, 0)
 
             files.groupBy { it.path.substringBeforeLast('.') }
-                .map { (baseName, group) ->
+                .mapNotNull { (baseName, group) ->
+                    // A lone .THM with no matching video/photo (an orphaned
+                    // thumbnail — this 8-year-old SD card has plenty of old
+                    // content left over from before this project) has no
+                    // viewable content of its own; showing it as its own
+                    // grid entry is just a confusing black tile.
+                    if (group.all { it.name.substringAfterLast('.', "").lowercase() == "thm" }) return@mapNotNull null
                     val bySize = group.sortedBy { it.sizeBytes ?: Long.MAX_VALUE }
                     MediaGroup(baseName, previewFile = bySize.first(), originalFile = bySize.getOrNull(1))
                 }

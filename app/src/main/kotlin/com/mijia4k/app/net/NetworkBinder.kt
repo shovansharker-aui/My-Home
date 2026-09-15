@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The camera's hotspot has no internet, so Android's normal network
@@ -19,8 +21,16 @@ import android.net.NetworkRequest
 object NetworkBinder {
     private var callback: ConnectivityManager.NetworkCallback? = null
 
-    fun bindToCameraWifi(context: Context) {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+    /**
+     * Suspends until the process is actually bound (or a timeout elapses).
+     * `requestNetwork`'s onAvailable callback fires asynchronously on the
+     * main looper — callers that opened a socket right after calling this
+     * without waiting would race it and get the phone's default route
+     * (mobile data) instead of the camera's Wi-Fi, which is exactly the
+     * "failed to connect... from <mobile-data-IP>" failure seen on device.
+     */
+    suspend fun bindToCameraWifi(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
         unbind(context)
 
         val request = NetworkRequest.Builder()
@@ -28,9 +38,11 @@ object NetworkBinder {
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
 
+        val bound = CompletableDeferred<Boolean>()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 cm.bindProcessToNetwork(network)
+                bound.complete(true)
             }
 
             override fun onLost(network: Network) {
@@ -38,7 +50,11 @@ object NetworkBinder {
             }
         }
         callback = cb
-        runCatching { cm.requestNetwork(request, cb) }
+        return runCatching { cm.requestNetwork(request, cb) }
+            .fold(
+                onSuccess = { withTimeoutOrNull(4000) { bound.await() } ?: false },
+                onFailure = { false },
+            )
     }
 
     fun unbind(context: Context) {

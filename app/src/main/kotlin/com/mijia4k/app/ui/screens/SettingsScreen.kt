@@ -179,12 +179,12 @@ private val GENERAL_FIELDS = listOf(
 private val MODE_LABELS = mapOf(
     "normal_record" to "Video",
     "time_lapse_record" to "Time Lapse Video",
-    "slow_motion_record" to "Slow Motion",
+    "slow_motion" to "Slow Motion",
     "loop_record" to "Loop Record",
-    "video_photo_record" to "Video+Photo",
+    "record_capture" to "Video+Photo",
     "normal_capture" to "Photo",
-    "self_timer_capture" to "Timer",
-    "burst_capture" to "Burst",
+    "timing_capture" to "Timer",
+    "continuous_capture" to "Burst",
     "time_lapse_capture" to "Time Lapse Photo",
 )
 
@@ -221,12 +221,12 @@ private val KNOWN_OPTIONS: Map<String, List<String>> = mapOf(
 private fun fieldsFor(modeValue: String): List<SettingField> = when (modeValue) {
     "normal_record" -> VIDEO_FIELDS
     "time_lapse_record" -> TIME_LAPSE_VIDEO_FIELDS
-    "slow_motion_record" -> SLOW_MOTION_FIELDS
+    "slow_motion" -> SLOW_MOTION_FIELDS
     "loop_record" -> LOOP_RECORD_FIELDS
-    "video_photo_record" -> VIDEO_PHOTO_FIELDS
+    "record_capture" -> VIDEO_PHOTO_FIELDS
     "normal_capture" -> PHOTO_FIELDS
-    "self_timer_capture" -> TIMER_FIELDS
-    "burst_capture" -> BURST_FIELDS
+    "timing_capture" -> TIMER_FIELDS
+    "continuous_capture" -> BURST_FIELDS
     "time_lapse_capture" -> TIME_LAPSE_PHOTO_FIELDS
     else -> PHOTO_FIELDS
 }

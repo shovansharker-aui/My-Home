@@ -96,12 +96,12 @@ private data class ModeOption(val label: String, val value: String, val icon: Im
 private val CAMERA_MODES = listOf(
     ModeOption("Video", "normal_record", Icons.Filled.Videocam),
     ModeOption("Time Lapse Video", "time_lapse_record", Icons.Filled.Timelapse),
-    ModeOption("Slow Motion", "slow_motion_record", Icons.Filled.SlowMotionVideo),
+    ModeOption("Slow Motion", "slow_motion", Icons.Filled.SlowMotionVideo),
     ModeOption("Loop Record", "loop_record", Icons.Filled.Loop),
-    ModeOption("Video+Photo", "video_photo_record", Icons.Filled.PhotoCameraFront),
+    ModeOption("Video+Photo", "record_capture", Icons.Filled.PhotoCameraFront),
     ModeOption("Photo", "normal_capture", Icons.Filled.CameraAlt),
-    ModeOption("Timer", "self_timer_capture", Icons.Filled.Timer),
-    ModeOption("Burst", "burst_capture", Icons.Filled.BurstMode),
+    ModeOption("Timer", "timing_capture", Icons.Filled.Timer),
+    ModeOption("Burst", "continuous_capture", Icons.Filled.BurstMode),
     ModeOption("Time Lapse Photo", "time_lapse_capture", Icons.Filled.Schedule),
 )
 
@@ -133,7 +133,6 @@ fun ShootScreen(
     var lastThumb by remember { mutableStateOf<Any?>(null) }
 
     LaunchedEffect(Unit) {
-        connected = CameraSession.connect().isSuccess
         lastThumb = LocalPreviewCache(context).listCached().maxByOrNull { it.lastModified() }
     }
 
@@ -153,29 +152,36 @@ fun ShootScreen(
         }
     }
 
-    // Poll the camera's own settings while this screen is open so the info
-    // row stays live, and — importantly — so the highlighted mode reflects
-    // what the camera actually reports rather than what we last tapped.
-    // Tapping a mode sends the command but does NOT update `currentMode`
-    // directly; this loop is the single source of truth for what mode is
-    // "selected" in the UI, so a rejected/no-effect command just doesn't
-    // flip the highlight instead of showing a mode that isn't really active.
-    LaunchedEffect(connected) {
-        while (connected) {
-            CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
-                val map = parseSettingsArray(json)
-                // Confirmed real key (from the camera's own settings dump):
-                // "mode_setting", not the "camera_mode" this used to read.
-                map["mode_setting"]?.let { raw ->
-                    cameraReportedMode = raw
-                    CAMERA_MODES.firstOrNull { it.value == raw }?.let { matched ->
-                        currentMode = matched
-                        CameraSession.currentModeValue = matched.value
+    // Connects, then keeps polling the camera's own settings while this
+    // screen is open so the info row stays live and the highlighted mode
+    // reflects what the camera actually reports rather than what was last
+    // tapped. Runs continuously (not gated on `connected`) so a dropped
+    // connection — confirmed reproducible: the phone's Wi-Fi drifting away
+    // from the camera's hotspot mid-session — self-heals within one cycle
+    // instead of needing the user to back out and reconnect manually.
+    // AmbaSocketClient now tears down a dead socket on any failed command,
+    // so CameraSession.connect() below correctly detects it needs to
+    // re-establish rather than being fooled into a no-op.
+    LaunchedEffect(Unit) {
+        while (true) {
+            connected = CameraSession.connect().isSuccess
+            if (connected) {
+                CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
+                    val map = parseSettingsArray(json)
+                    // Confirmed real key (from the camera's own settings
+                    // dump): "mode_setting", not the "camera_mode" this
+                    // used to read.
+                    map["mode_setting"]?.let { raw ->
+                        cameraReportedMode = raw
+                        CAMERA_MODES.firstOrNull { it.value == raw }?.let { matched ->
+                            currentMode = matched
+                            CameraSession.currentModeValue = matched.value
+                        }
                     }
+                    liveInfo = liveInfoFor(currentMode.value, map)
                 }
-                liveInfo = liveInfoFor(currentMode.value, map)
             }
-            delay(3000)
+            delay(if (connected) 3000 else 2000)
         }
     }
 
@@ -514,12 +520,12 @@ private val LIVE_INFO_LABELS = mapOf(
 private val LIVE_INFO_KEYS_BY_MODE = mapOf(
     "normal_record" to listOf("video_resolution", "video_quality"),
     "time_lapse_record" to listOf("video_time_lapse", "video_resolution"),
-    "slow_motion_record" to listOf("video_rate", "video_quality"),
+    "slow_motion" to listOf("video_rate", "video_quality"),
     "loop_record" to listOf("video_loop_length", "video_resolution"),
-    "video_photo_record" to listOf("video_piv_time_lapse", "video_resolution"),
+    "record_capture" to listOf("video_piv_time_lapse", "video_resolution"),
     "normal_capture" to listOf("photo_iso", "photo_shutter", "photo_metering_mode"),
-    "self_timer_capture" to listOf("photo_selftimer", "photo_iso"),
-    "burst_capture" to listOf("photo_burst_frequence", "photo_iso"),
+    "timing_capture" to listOf("photo_selftimer", "photo_iso"),
+    "continuous_capture" to listOf("photo_burst_frequence", "photo_iso"),
     "time_lapse_capture" to listOf("photo_time_lapse", "photo_iso"),
 )
 

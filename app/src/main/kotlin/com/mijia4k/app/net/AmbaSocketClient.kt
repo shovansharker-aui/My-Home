@@ -53,6 +53,11 @@ class AmbaSocketClient(
             })
             token = response.optInt("param", 0)
             Unit
+        }.onFailure {
+            // A half-open socket from a failed handshake would otherwise
+            // leave isConnected reporting true (TCP connect succeeded even
+            // though the START_SESSION exchange didn't).
+            closeQuietly()
         }
     }
 
@@ -65,12 +70,7 @@ class AmbaSocketClient(
                 })
             }
         }
-        runCatching { reader?.close() }
-        runCatching { writer?.close() }
-        runCatching { socket?.close() }
-        reader = null
-        writer = null
-        socket = null
+        closeQuietly()
     }
 
     suspend fun takePhoto(): Result<JSONObject> = command(MsgId.TAKE_PHOTO)
@@ -130,8 +130,29 @@ class AmbaSocketClient(
                     param?.let { put("param", it) }
                     put("token", token)
                 })
+            }.onFailure {
+                // A write/read failure (e.g. "Broken pipe" — the camera's
+                // Wi-Fi drifting away mid-session is a real, reproduced
+                // issue) can leave the socket in a "zombie" state where
+                // isConnected still reports true locally even though the
+                // remote end is long gone. Tear it down here so the next
+                // CameraSession.connect() call correctly sees it as
+                // disconnected and re-establishes a fresh session instead
+                // of being fooled into a no-op — this is what lets the app
+                // self-heal within one poll cycle instead of needing a
+                // manual restart.
+                closeQuietly()
             }
         }
+    }
+
+    private fun closeQuietly() {
+        runCatching { reader?.close() }
+        runCatching { writer?.close() }
+        runCatching { socket?.close() }
+        reader = null
+        writer = null
+        socket = null
     }
 
     private fun throttle() {
