@@ -40,11 +40,15 @@ fun Mijia4kNavHost(navController: NavHostController) {
                 onBack = { navController.popBackStack() },
                 onOpenGallery = { navController.navigate(Routes.GALLERY) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
             )
         }
         composable(Routes.GALLERY) { GalleryScreen(onBack = { navController.popBackStack() }) }
         composable(Routes.DIAGNOSTICS) { DiagnosticsScreen(onBack = { navController.popBackStack() }) }
-        composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
+            )
+        }
     }
 }

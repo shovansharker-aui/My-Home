@@ -18,6 +18,9 @@ object CameraSession {
     val client = AmbaSocketClient()
     private val lock = Mutex()
 
+    /** Last shooting mode value set from the Shoot screen — read by Settings to show the right parameter list. */
+    var currentModeValue: String = "time_lapse_record"
+
     suspend fun connect(): Result<Unit> = lock.withLock {
         if (client.isConnected) return@withLock Result.success(Unit)
         client.connectAndStartSession()
