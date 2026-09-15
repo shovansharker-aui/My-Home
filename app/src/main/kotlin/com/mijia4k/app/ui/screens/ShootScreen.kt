@@ -87,20 +87,22 @@ private data class ModeOption(val label: String, val value: String, val icon: Im
 // Taken directly from the stock Mi Home app's "Select Mode" screen (user
 // screenshot), same grid order: row 1 Video/Time Lapse Video/Slow Motion,
 // row 2 Loop Record/Video+Photo/Photo, row 3 Timer/Burst/Time Lapse Photo.
-// The *labels* are confirmed real; the *value* strings sent to the camera's
-// SET_SETTING command are still guesses (only "normal_record" for Video
-// comes from documented Ambarella protocol research) — the status line
-// after tapping shows the camera's real accept/reject response.
+// The *labels* are confirmed real. The *value* strings follow a pattern
+// confirmed from two live data points: "time_lapse_record" matched exactly
+// in the camera's own settings dump, and the camera live-reported
+// "normal_capture" as its current mode (a value we'd never guessed) — so
+// video-family modes use "_record", photo-family modes use "_capture".
+// Video+Photo is genuinely ambiguous (mixed mode); still a guess.
 private val CAMERA_MODES = listOf(
     ModeOption("Video", "normal_record", Icons.Filled.Videocam),
     ModeOption("Time Lapse Video", "time_lapse_record", Icons.Filled.Timelapse),
     ModeOption("Slow Motion", "slow_motion_record", Icons.Filled.SlowMotionVideo),
     ModeOption("Loop Record", "loop_record", Icons.Filled.Loop),
-    ModeOption("Video+Photo", "video_photo", Icons.Filled.PhotoCameraFront),
-    ModeOption("Photo", "photo", Icons.Filled.CameraAlt),
-    ModeOption("Timer", "self_timer", Icons.Filled.Timer),
-    ModeOption("Burst", "burst", Icons.Filled.BurstMode),
-    ModeOption("Time Lapse Photo", "time_lapse_photo", Icons.Filled.Schedule),
+    ModeOption("Video+Photo", "video_photo_record", Icons.Filled.PhotoCameraFront),
+    ModeOption("Photo", "normal_capture", Icons.Filled.CameraAlt),
+    ModeOption("Timer", "self_timer_capture", Icons.Filled.Timer),
+    ModeOption("Burst", "burst_capture", Icons.Filled.BurstMode),
+    ModeOption("Time Lapse Photo", "time_lapse_capture", Icons.Filled.Schedule),
 )
 
 private val ShutterTeal = Color(0xFF00BFA5)
@@ -514,11 +516,11 @@ private val LIVE_INFO_KEYS_BY_MODE = mapOf(
     "time_lapse_record" to listOf("video_time_lapse", "video_resolution"),
     "slow_motion_record" to listOf("video_rate", "video_quality"),
     "loop_record" to listOf("video_loop_length", "video_resolution"),
-    "video_photo" to listOf("video_piv_time_lapse", "video_resolution"),
-    "photo" to listOf("photo_iso", "photo_shutter", "photo_metering_mode"),
-    "self_timer" to listOf("photo_selftimer", "photo_iso"),
-    "burst" to listOf("photo_burst_frequence", "photo_iso"),
-    "time_lapse_photo" to listOf("photo_time_lapse", "photo_iso"),
+    "video_photo_record" to listOf("video_piv_time_lapse", "video_resolution"),
+    "normal_capture" to listOf("photo_iso", "photo_shutter", "photo_metering_mode"),
+    "self_timer_capture" to listOf("photo_selftimer", "photo_iso"),
+    "burst_capture" to listOf("photo_burst_frequence", "photo_iso"),
+    "time_lapse_capture" to listOf("photo_time_lapse", "photo_iso"),
 )
 
 /** Picks the 2-3 most relevant fields to show for the current mode, using the real (confirmed) field keys. */

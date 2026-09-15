@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -170,16 +171,21 @@ private val GENERAL_FIELDS = listOf(
     SettingField("Language", "language"),
 )
 
+// Values confirmed live against the real camera: "time_lapse_record"
+// matched the camera's own settings dump exactly, and the camera
+// live-reported "normal_capture" as its current mode (a value never
+// guessed before) — video-family modes use "_record", photo-family modes
+// use "_capture". Must match CAMERA_MODES in ShootScreen.kt.
 private val MODE_LABELS = mapOf(
     "normal_record" to "Video",
     "time_lapse_record" to "Time Lapse Video",
     "slow_motion_record" to "Slow Motion",
     "loop_record" to "Loop Record",
-    "video_photo" to "Video+Photo",
-    "photo" to "Photo",
-    "self_timer" to "Timer",
-    "burst" to "Burst",
-    "time_lapse_photo" to "Time Lapse Photo",
+    "video_photo_record" to "Video+Photo",
+    "normal_capture" to "Photo",
+    "self_timer_capture" to "Timer",
+    "burst_capture" to "Burst",
+    "time_lapse_capture" to "Time Lapse Photo",
 )
 
 // The only confirmed-real option list (from the Slow Motion mode's EV
@@ -190,16 +196,38 @@ private val EV_OPTIONS = listOf(
     "-0.3EV", "-0.7EV", "-1.0EV", "-1.3EV", "-1.7EV", "-2.0EV",
 )
 
+// GET_SINGLE_SETTING_OPTIONS comes back empty even for confirmed-correct
+// keys (verified live against the real camera) — this firmware just
+// doesn't support live option enumeration for most fields. These are
+// curated guesses from standard action-cam UX conventions, not confirmed
+// real option strings — "Other..." always lets you type the exact value
+// instead if a guess is wrong or incomplete.
+private val KNOWN_OPTIONS: Map<String, List<String>> = mapOf(
+    "system_type" to listOf("NTSC", "PAL"),
+    "prompt_volume" to listOf("mute", "low", "high"),
+    "auto_lock_screen" to listOf("off", "30s", "1min", "3min"),
+    "auto_power_off" to listOf("off", "3min", "5min", "10min"),
+    "auto_rotate" to listOf("up", "down"),
+    "lcd_brightness" to listOf("low", "medium", "high"),
+    "led_mode" to listOf("all_on", "front_off", "all_off"),
+    "video_metering_mode" to listOf("center", "average", "spot"),
+    "photo_metering_mode" to listOf("center", "average", "spot"),
+    "video_white_balance" to listOf("auto", "sunny", "cloudy", "incandescent", "fluorescent"),
+    "photo_wb" to listOf("auto", "sunny", "cloudy", "incandescent", "fluorescent"),
+    "video_stamp" to listOf("off", "date", "date_time"),
+    "photo_stamp" to listOf("off", "date", "date_time"),
+)
+
 private fun fieldsFor(modeValue: String): List<SettingField> = when (modeValue) {
     "normal_record" -> VIDEO_FIELDS
     "time_lapse_record" -> TIME_LAPSE_VIDEO_FIELDS
     "slow_motion_record" -> SLOW_MOTION_FIELDS
     "loop_record" -> LOOP_RECORD_FIELDS
-    "video_photo" -> VIDEO_PHOTO_FIELDS
-    "photo" -> PHOTO_FIELDS
-    "self_timer" -> TIMER_FIELDS
-    "burst" -> BURST_FIELDS
-    "time_lapse_photo" -> TIME_LAPSE_PHOTO_FIELDS
+    "video_photo_record" -> VIDEO_PHOTO_FIELDS
+    "normal_capture" -> PHOTO_FIELDS
+    "self_timer_capture" -> TIMER_FIELDS
+    "burst_capture" -> BURST_FIELDS
+    "time_lapse_capture" -> TIME_LAPSE_PHOTO_FIELDS
     else -> PHOTO_FIELDS
 }
 
@@ -418,35 +446,56 @@ private fun GeneralSettingsList(
 }
 
 /**
- * The camera doesn't support enumerating valid options per field on this
- * firmware (GET_SINGLE_SETTING_OPTIONS fails uniformly) — so editing is a
- * quick-pick for EV (the one confirmed real option list) and free-text entry
- * for everything else, sending straight to SET_SETTING and showing its raw
- * reply so a wrong guess is visible immediately.
+ * GET_SINGLE_SETTING_OPTIONS comes back empty even for confirmed-correct
+ * keys (verified live), so this firmware just doesn't support live option
+ * enumeration for most fields — priority is: the confirmed EV list, then a
+ * curated guess list (KNOWN_OPTIONS) for common fields, then a live query
+ * attempt anyway (in case some field is the exception), then free-text.
+ * "Other..." always escapes a shown list into manual entry.
  */
 @Composable
 private fun EditFieldDialog(field: SettingField, currentValue: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by remember { mutableStateOf(currentValue) }
     val isEv = field.key.endsWith("_ev_bias")
+    val curated = KNOWN_OPTIONS[field.key]
+
+    // loading = null, resolved (success or empty) = non-null list.
+    var options by remember {
+        mutableStateOf<List<String>?>(
+            when {
+                isEv -> EV_OPTIONS
+                curated != null -> curated
+                else -> null
+            },
+        )
+    }
+    var manualEntry by remember { mutableStateOf(false) }
+
+    LaunchedEffect(field.key) {
+        if (isEv || curated != null) return@LaunchedEffect
+        val result = CameraSession.client.getSettingOptions(field.key)
+        options = result.getOrNull()?.let { json ->
+            json.optJSONArray("param")?.let { arr -> (0 until arr.length()).mapNotNull { arr.opt(it)?.toString() } }
+        } ?: emptyList()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(field.label) },
         text = {
-            if (isEv) {
-                androidx.compose.foundation.layout.Column {
-                    for (opt in EV_OPTIONS) {
+            val current = options
+            when {
+                manualEntry || current?.isEmpty() == true -> androidx.compose.foundation.layout.Column {
+                    if (current?.isEmpty() == true) {
                         Text(
-                            opt,
-                            modifier = Modifier.fillMaxWidth().clickable { onSave(opt) }.padding(vertical = 10.dp),
+                            "Camera reported no selectable options for \"${field.key}\" — enter a value manually.",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                }
-            } else {
-                androidx.compose.foundation.layout.Column {
                     Text(
-                        "Current: $currentValue (key: \"${field.key}\")",
+                        "Current: $currentValue",
                         style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                     OutlinedTextField(
                         value = text,
@@ -456,10 +505,24 @@ private fun EditFieldDialog(field: SettingField, currentValue: String, onDismiss
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
                 }
+                current == null -> CircularProgressIndicator()
+                else -> androidx.compose.foundation.layout.Column {
+                    for (opt in current) {
+                        Text(
+                            opt,
+                            modifier = Modifier.fillMaxWidth().clickable { onSave(opt) }.padding(vertical = 10.dp),
+                        )
+                    }
+                    Text(
+                        "Other...",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth().clickable { manualEntry = true }.padding(vertical = 10.dp),
+                    )
+                }
             }
         },
         confirmButton = {
-            if (!isEv) {
+            if (manualEntry || options?.isEmpty() == true) {
                 Button(onClick = { onSave(text) }) { Text("Save") }
             }
         },
