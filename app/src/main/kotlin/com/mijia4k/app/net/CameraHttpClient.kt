@@ -64,6 +64,42 @@ class CameraHttpClient(
         }.toList()
     }
 
+    /**
+     * Each shot on this camera writes two files sharing a basename (e.g. a
+     * full-resolution original plus a much smaller companion — a `.THM`
+     * alongside an `.MP4`, or similar for photos). This groups a folder
+     * listing's flat files by basename and picks the smaller of each pair
+     * as the "preview" — the one Gallery should display/play by default —
+     * keeping the larger one addressable as the original for downloads.
+     * When a file has no pair, it serves as both.
+     */
+    data class MediaGroup(
+        val baseName: String,
+        val previewFile: CameraFile,
+        val originalFile: CameraFile?,
+    )
+
+    /** Recursively lists every file under [root] (default DCIM) and pairs them into [MediaGroup]s. */
+    suspend fun listAllMedia(root: String = DCIM_ROOT, maxDepth: Int = 3): List<MediaGroup> =
+        withContext(Dispatchers.IO) {
+            val files = mutableListOf<CameraFile>()
+
+            suspend fun walk(path: String, depth: Int) {
+                if (depth > maxDepth) return
+                for (entry in listDirectory(path)) {
+                    if (entry.isDirectory) walk(entry.path, depth + 1) else files += entry
+                }
+            }
+            walk(root, 0)
+
+            files.groupBy { it.path.substringBeforeLast('.') }
+                .map { (baseName, group) ->
+                    val bySize = group.sortedBy { it.sizeBytes ?: Long.MAX_VALUE }
+                    MediaGroup(baseName, previewFile = bySize.first(), originalFile = bySize.getOrNull(1))
+                }
+                .sortedBy { it.baseName }
+        }
+
     suspend fun downloadTo(file: CameraFile, out: OutputStream): Long = withContext(Dispatchers.IO) {
         httpClient.newCall(Request.Builder().url(file.url).build()).execute().use { resp ->
             check(resp.isSuccessful) { "Download failed: HTTP ${resp.code}" }

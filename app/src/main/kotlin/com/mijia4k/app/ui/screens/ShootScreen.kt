@@ -48,11 +48,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
 import com.mijia4k.app.net.CameraEndpoints
+import com.mijia4k.app.net.CameraHttpClient
 import com.mijia4k.app.net.CameraSession
+import com.mijia4k.app.net.LocalPreviewCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -73,14 +76,36 @@ fun ShootScreen(
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var modes by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modesError by remember { mutableStateOf<String?>(null) }
     var currentMode by remember { mutableStateOf<String?>(null) }
     var liveInfo by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
 
+    fun loadModes() {
+        scope.launch {
+            val result = CameraSession.client.getSettingOptions("camera_mode")
+            modes = result.getOrNull()?.let { parseStringList(it) } ?: emptyList()
+            modesError = result.exceptionOrNull()?.message
+                ?: if (modes.isEmpty()) "camera reported no options for camera_mode" else null
+        }
+    }
+
     LaunchedEffect(Unit) {
         connected = CameraSession.connect().isSuccess
+        if (connected) loadModes()
+    }
+
+    // Sync the small preview files for everything currently on the camera
+    // into the app's own storage as soon as we're connected, so Gallery is
+    // instantly browsable (and mostly offline-capable) instead of having to
+    // fetch over the camera's slow hotspot each time it's opened.
+    LaunchedEffect(connected) {
         if (connected) {
-            modes = CameraSession.client.getSettingOptions("camera_mode")
-                .getOrNull()?.let { parseStringList(it) } ?: emptyList()
+            val httpClient = CameraHttpClient()
+            val cache = LocalPreviewCache(context)
+            runCatching {
+                val groups = httpClient.listAllMedia()
+                cache.sync(httpClient, groups)
+            }
         }
     }
 
@@ -100,8 +125,22 @@ fun ShootScreen(
     }
 
     val player = remember {
+        // Default ExoPlayer buffering targets several seconds of video before
+        // playback, which is fine for progressive/HLS but makes a live feed
+        // feel badly delayed. Cut the buffer way down — this is a live
+        // control feed, not something that needs to survive network hiccups
+        // smoothly, so a stutter now and then is a fair trade for latency.
+        val lowLatencyLoadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 300,
+                /* maxBufferMs = */ 600,
+                /* bufferForPlaybackMs = */ 100,
+                /* bufferForPlaybackAfterRebufferMs = */ 150,
+            )
+            .build()
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(RtspMediaSource.Factory())
+            .setLoadControl(lowLatencyLoadControl)
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(CameraEndpoints.RTSP_URL))
@@ -231,12 +270,12 @@ fun ShootScreen(
                 }
             }
 
+            Text(
+                "Shooting mode",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
             if (modes.isNotEmpty()) {
-                Text(
-                    "Shooting mode",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -251,6 +290,20 @@ fun ShootScreen(
                             },
                             label = { Text(mode) },
                         )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        modesError ?: "Not loaded yet",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (connected) {
+                        AssistChip(onClick = { loadModes() }, label = { Text("Retry") })
                     }
                 }
             }

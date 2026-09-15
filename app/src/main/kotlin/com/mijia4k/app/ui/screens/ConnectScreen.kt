@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.CameraEndpoints
 import com.mijia4k.app.net.CameraSession
+import com.mijia4k.app.net.NetworkBinder
 import kotlinx.coroutines.launch
 
 private enum class ConnState { UNKNOWN, CHECKING, CONNECTED, FAILED }
@@ -49,6 +50,10 @@ fun ConnectScreen(
     fun connect() {
         state = ConnState.CHECKING
         errorMessage = null
+        // The camera's hotspot has no internet, so Android will otherwise
+        // route our traffic through mobile data / another Wi-Fi instead —
+        // pin this app's networking to the camera's Wi-Fi explicitly.
+        NetworkBinder.bindToCameraWifi(context)
         scope.launch {
             val result = CameraSession.connect()
             if (result.isSuccess) {
@@ -80,7 +85,11 @@ fun ConnectScreen(
             Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier)
             Text(
                 text = "Connect your phone's Wi-Fi to the camera's hotspot " +
-                    "(SSID starts with \"MiCam_\"), then check below.",
+                    "(SSID starts with \"MiCam_\"), then check below. If your phone keeps hopping " +
+                    "back to another network, turn off \"Switch to mobile data automatically\" / " +
+                    "\"Avoid poor connections\" for this Wi-Fi in Android's Wi-Fi settings — the app " +
+                    "pins its own traffic to the camera regardless, but Android may still show you a " +
+                    "different network as connected unless that's off.",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
