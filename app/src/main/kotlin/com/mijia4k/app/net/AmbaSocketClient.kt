@@ -92,8 +92,19 @@ class AmbaSocketClient(
 
     suspend fun getAllCurrentSettings(): Result<JSONObject> = command(MsgId.GET_ALL_CURRENT_SETTINGS)
 
-    suspend fun setCameraMode(mode: String): Result<JSONObject> =
-        command(MsgId.SET_SETTING, type = "camera_mode", param = mode)
+    suspend fun getCurrentModeSettings(): Result<JSONObject> = command(MsgId.GET_CURRENT_MODE_SETTINGS)
+
+    /** Value(s) the camera currently accepts for one setting — used to build option pickers. */
+    suspend fun getSettingOptions(type: String): Result<JSONObject> =
+        command(MsgId.GET_SINGLE_SETTING_OPTIONS, type = type)
+
+    suspend fun getSetting(type: String): Result<JSONObject> =
+        command(MsgId.GET_SETTING, type = type)
+
+    suspend fun setSetting(type: String, value: String): Result<JSONObject> =
+        command(MsgId.SET_SETTING, type = type, param = value)
+
+    suspend fun setCameraMode(mode: String): Result<JSONObject> = setSetting("camera_mode", mode)
 
     suspend fun startViewfinder(): Result<JSONObject> =
         command(MsgId.BOSS_RESETVF, param = "none_force")

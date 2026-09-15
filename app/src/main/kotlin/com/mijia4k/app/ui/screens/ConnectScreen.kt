@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,8 +38,7 @@ private enum class ConnState { UNKNOWN, CHECKING, CONNECTED, FAILED }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectScreen(
-    onOpenShoot: () -> Unit,
-    onOpenGallery: () -> Unit,
+    onConnected: () -> Unit,
     onOpenDiagnostics: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -54,14 +51,21 @@ fun ConnectScreen(
         errorMessage = null
         scope.launch {
             val result = CameraSession.connect()
-            state = if (result.isSuccess) ConnState.CONNECTED else ConnState.FAILED
-            errorMessage = result.exceptionOrNull()?.message
+            if (result.isSuccess) {
+                state = ConnState.CONNECTED
+                onConnected()
+            } else {
+                state = ConnState.FAILED
+                errorMessage = result.exceptionOrNull()?.message
+            }
         }
     }
 
     // Auto-connect on open: the camera's own screen sits on "connecting..."
-    // until a client completes the control-socket handshake, so do that as
-    // soon as this screen is shown rather than waiting for a button tap.
+    // until a client completes the control-socket handshake, and the app
+    // should drop straight into the live-preview screen once that's done
+    // rather than making the user tap through, so do both as soon as this
+    // screen is shown.
     LaunchedEffect(Unit) { connect() }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Mijia 4K") }) }) { padding ->
@@ -99,14 +103,6 @@ fun ConnectScreen(
                 Text("Open Wi-Fi settings")
             }
 
-            Button(onClick = onOpenShoot, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.CameraAlt, contentDescription = null)
-                Text("  Shoot")
-            }
-            Button(onClick = onOpenGallery, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Photo, contentDescription = null)
-                Text("  Gallery")
-            }
             OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
                 Text("Diagnostics")
             }
