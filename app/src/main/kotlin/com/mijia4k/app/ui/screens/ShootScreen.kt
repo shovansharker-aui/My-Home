@@ -78,9 +78,9 @@ import com.mijia4k.app.net.CameraHttpClient
 import com.mijia4k.app.net.CameraImageLoader
 import com.mijia4k.app.net.CameraSession
 import com.mijia4k.app.net.LocalPreviewCache
+import com.mijia4k.app.net.parseSettingsArray
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 private data class ModeOption(val label: String, val value: String, val icon: ImageVector)
 
@@ -161,8 +161,10 @@ fun ShootScreen(
     LaunchedEffect(connected) {
         while (connected) {
             CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
-                val map = parseSettingsMap(json)
-                map["camera_mode"]?.let { raw ->
+                val map = parseSettingsArray(json)
+                // Confirmed real key (from the camera's own settings dump):
+                // "mode_setting", not the "camera_mode" this used to read.
+                map["mode_setting"]?.let { raw ->
                     cameraReportedMode = raw
                     CAMERA_MODES.firstOrNull { it.value == raw }?.let { matched ->
                         currentMode = matched
@@ -488,44 +490,39 @@ private fun formatDuration(totalSeconds: Int): String {
     return "%02d:%02d".format(m, s)
 }
 
-// Key -> display label, matching the exact field keys used in
-// SettingsScreen.kt's per-mode field lists (transcribed from real screen
-// recordings of the stock app). 2-3 of each mode's real fields, picked as
-// the ones most useful to glance at live.
+// Key -> display label, using the real field keys confirmed from the
+// camera's own GET_ALL_CURRENT_SETTINGS dump. 2-3 of each mode's real
+// fields, picked as the ones most useful to glance at live.
 private val LIVE_INFO_LABELS = mapOf(
-    "resolution" to "Resolution",
-    "quality" to "Quality",
-    "speed" to "Speed",
-    "video_length" to "Length",
-    "interval" to "Interval",
-    "iso" to "ISO",
-    "shutter" to "Shutter",
-    "metering_mode" to "Metering",
-    "countdown" to "Countdown",
-    "burst_rate" to "Rate",
-    "aspect_ratio" to "Ratio",
+    "video_resolution" to "Resolution",
+    "video_quality" to "Quality",
+    "video_rate" to "Speed",
+    "video_loop_length" to "Length",
+    "video_time_lapse" to "Interval",
+    "video_piv_time_lapse" to "Interval",
+    "photo_time_lapse" to "Interval",
+    "photo_iso" to "ISO",
+    "photo_shutter" to "Shutter",
+    "photo_metering_mode" to "Metering",
+    "photo_selftimer" to "Countdown",
+    "photo_burst_frequence" to "Rate",
+    "photo_size" to "Size",
 )
 
 private val LIVE_INFO_KEYS_BY_MODE = mapOf(
-    "normal_record" to listOf("resolution", "quality"),
-    "time_lapse_record" to listOf("interval", "resolution"),
-    "slow_motion_record" to listOf("speed", "quality"),
-    "loop_record" to listOf("video_length", "resolution"),
-    "video_photo" to listOf("interval", "resolution"),
-    "photo" to listOf("iso", "shutter", "metering_mode"),
-    "self_timer" to listOf("countdown", "iso"),
-    "burst" to listOf("burst_rate", "iso"),
-    "time_lapse_photo" to listOf("interval", "iso"),
+    "normal_record" to listOf("video_resolution", "video_quality"),
+    "time_lapse_record" to listOf("video_time_lapse", "video_resolution"),
+    "slow_motion_record" to listOf("video_rate", "video_quality"),
+    "loop_record" to listOf("video_loop_length", "video_resolution"),
+    "video_photo" to listOf("video_piv_time_lapse", "video_resolution"),
+    "photo" to listOf("photo_iso", "photo_shutter", "photo_metering_mode"),
+    "self_timer" to listOf("photo_selftimer", "photo_iso"),
+    "burst" to listOf("photo_burst_frequence", "photo_iso"),
+    "time_lapse_photo" to listOf("photo_time_lapse", "photo_iso"),
 )
 
-/** Picks the 2-3 most relevant fields to show for the current mode, using the real (transcribed) field keys. */
+/** Picks the 2-3 most relevant fields to show for the current mode, using the real (confirmed) field keys. */
 private fun liveInfoFor(mode: String, settings: Map<String, String>): List<Pair<String, String>> {
-    val keys = LIVE_INFO_KEYS_BY_MODE[mode] ?: listOf("resolution", "quality")
+    val keys = LIVE_INFO_KEYS_BY_MODE[mode] ?: listOf("video_resolution", "video_quality")
     return keys.mapNotNull { key -> settings[key]?.let { value -> (LIVE_INFO_LABELS[key] ?: key) to value } }
-}
-
-/** Best-effort parse of a msg_id=3 (GET_ALL_CURRENT_SETTINGS) reply into a flat key/value map. */
-private fun parseSettingsMap(json: JSONObject): Map<String, String> {
-    val obj = json.optJSONObject("param") ?: return emptyMap()
-    return obj.keys().asSequence().associateWith { key -> obj.opt(key)?.toString().orEmpty() }
 }

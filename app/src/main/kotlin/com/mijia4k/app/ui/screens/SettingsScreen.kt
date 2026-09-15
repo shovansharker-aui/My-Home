@@ -1,26 +1,25 @@
 package com.mijia4k.app.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -37,127 +36,138 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.CameraSession
+import com.mijia4k.app.net.parseSettingsArray
 import kotlinx.coroutines.launch
 
 private data class SettingField(val label: String, val key: String, val isToggle: Boolean = false)
 
-// Every field set below, including field order and current default values, is
-// transcribed directly from screen recordings of the real Mi Home app for
-// this camera (all 9 modes + the general Camera Settings page were
-// captured). The *labels* and *order* are exact. The *key* strings sent to
-// the camera's GET_SETTING/SET_SETTING commands are still our own guesses —
-// the real protocol doesn't document its key names anywhere public — so a
-// field showing "camera reported no options" means the guessed key doesn't
-// match this firmware's actual name for it, not that the setting is fake.
+// Field labels/order below are transcribed from real screen recordings of
+// the stock app. The *keys* are now confirmed too — read directly off the
+// real camera's GET_ALL_CURRENT_SETTINGS dump (msg_id 3, which works
+// perfectly), not guessed. That dump also revealed that the per-field
+// GET_SETTING/GET_SINGLE_SETTING_OPTIONS commands (msg_id 1/9, both of which
+// take a "type" argument) fail with the *same* error code regardless of
+// which key is passed — so this screen now reads every value from one
+// GET_ALL_CURRENT_SETTINGS call instead of querying fields individually,
+// and edits go through a free-text field (there's no way to enumerate valid
+// options from the camera on this firmware) rather than a live picker.
 
 private val VIDEO_FIELDS = listOf(
-    SettingField("Color", "color_mode"),
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Mic Mute", "mic_mute", isToggle = true),
-    SettingField("Stamp", "stamp"),
-    SettingField("Auto Record", "auto_record", isToggle = true),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
+    SettingField("Color", "video_color"),
+    SettingField("Resolution", "video_resolution"),
+    SettingField("Quality", "video_quality"),
+    SettingField("Mic Mute", "video_mute", isToggle = true),
+    SettingField("Stamp", "video_stamp"),
+    SettingField("Auto Record", "video_record_startup", isToggle = true),
+    SettingField("Metering Mode", "video_metering_mode"),
+    SettingField("EV", "video_ev_bias"),
+    SettingField("WB", "video_white_balance"),
+    SettingField("ISO", "video_iso"),
 )
 private val TIME_LAPSE_VIDEO_FIELDS = listOf(
-    SettingField("Interval", "interval"),
-    SettingField("Video Length", "video_length"),
-    SettingField("Color", "color_mode"),
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Stamp", "stamp"),
-    SettingField("Auto Record", "auto_record", isToggle = true),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
+    SettingField("Interval", "video_time_lapse"),
+    SettingField("Video Length", "video_time_lapse_length"),
+    SettingField("Color", "video_color"),
+    SettingField("Resolution", "video_resolution"),
+    SettingField("Quality", "video_quality"),
+    SettingField("Stamp", "video_stamp"),
+    SettingField("Auto Record", "video_record_startup", isToggle = true),
+    SettingField("Metering Mode", "video_metering_mode"),
+    SettingField("EV", "video_ev_bias"),
+    SettingField("WB", "video_white_balance"),
 )
 private val SLOW_MOTION_FIELDS = listOf(
-    SettingField("Speed", "speed"),
-    SettingField("Color", "color_mode"),
-    SettingField("Quality", "quality"),
-    SettingField("Auto Record", "auto_record", isToggle = true),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
+    SettingField("Speed", "video_rate"),
+    SettingField("Color", "video_color"),
+    SettingField("Quality", "video_quality"),
+    SettingField("Auto Record", "video_record_startup", isToggle = true),
+    SettingField("Metering Mode", "video_metering_mode"),
+    SettingField("EV", "video_ev_bias"),
+    SettingField("WB", "video_white_balance"),
 )
 private val LOOP_RECORD_FIELDS = listOf(
-    SettingField("Video Length", "video_length"),
-    SettingField("Color", "color_mode"),
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Mic Mute", "mic_mute", isToggle = true),
-    SettingField("Stamp", "stamp"),
-    SettingField("Auto Record", "auto_record", isToggle = true),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
+    SettingField("Video Length", "video_loop_length"),
+    SettingField("Color", "video_color"),
+    SettingField("Resolution", "video_resolution"),
+    SettingField("Quality", "video_quality"),
+    SettingField("Mic Mute", "video_mute", isToggle = true),
+    SettingField("Stamp", "video_stamp"),
+    SettingField("Auto Record", "video_record_startup", isToggle = true),
+    SettingField("Metering Mode", "video_metering_mode"),
+    SettingField("EV", "video_ev_bias"),
+    SettingField("WB", "video_white_balance"),
 )
 private val VIDEO_PHOTO_FIELDS = listOf(
-    SettingField("Interval", "interval"),
-    SettingField("Color", "color_mode"),
-    SettingField("Resolution", "resolution"),
-    SettingField("Quality", "quality"),
-    SettingField("Mic Mute", "mic_mute", isToggle = true),
-    SettingField("Stamp", "stamp"),
-    SettingField("Auto Record", "auto_record", isToggle = true),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("WB", "wb"),
+    SettingField("Interval", "video_piv_time_lapse"),
+    SettingField("Color", "video_color"),
+    SettingField("Resolution", "video_resolution"),
+    SettingField("Quality", "video_quality"),
+    SettingField("Mic Mute", "video_mute", isToggle = true),
+    SettingField("Stamp", "video_stamp"),
+    SettingField("Auto Record", "video_record_startup", isToggle = true),
+    SettingField("Metering Mode", "video_metering_mode"),
+    SettingField("EV", "video_ev_bias"),
+    SettingField("WB", "video_white_balance"),
 )
 private val PHOTO_FIELDS = listOf(
-    SettingField("Aspect Ratio", "aspect_ratio"),
-    SettingField("Stamp", "stamp"),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("Shutter", "shutter"),
-    SettingField("ISO", "iso"),
-    SettingField("RAW", "raw", isToggle = true),
-    SettingField("WB", "wb"),
-    SettingField("Color", "color_mode"),
+    SettingField("Aspect Ratio", "photo_size"),
+    SettingField("Stamp", "photo_stamp"),
+    SettingField("Metering Mode", "photo_metering_mode"),
+    SettingField("EV", "photo_ev_bias"),
+    SettingField("Shutter", "photo_shutter"),
+    SettingField("ISO", "photo_iso"),
+    SettingField("RAW", "photo_raw", isToggle = true),
+    SettingField("WB", "photo_wb"),
+    // Unconfirmed: the real camera dump doesn't show an obvious
+    // "photo_color" key — "photo_digital_effect" is the closest candidate
+    // but its "off" value doesn't look like a color-profile name, so this
+    // one may still be wrong.
+    SettingField("Color", "photo_digital_effect"),
 )
 private val TIMER_FIELDS = listOf(
-    SettingField("Countdown", "countdown"),
-    SettingField("Aspect Ratio", "aspect_ratio"),
-    SettingField("Stamp", "stamp"),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("ISO", "iso"),
-    SettingField("WB", "wb"),
-    SettingField("Color", "color_mode"),
+    SettingField("Countdown", "photo_selftimer"),
+    SettingField("Aspect Ratio", "photo_size"),
+    SettingField("Stamp", "photo_stamp"),
+    SettingField("Metering Mode", "photo_metering_mode"),
+    SettingField("EV", "photo_ev_bias"),
+    SettingField("ISO", "photo_iso"),
+    SettingField("WB", "photo_wb"),
 )
 private val BURST_FIELDS = listOf(
-    SettingField("Rate", "burst_rate"),
-    SettingField("Aspect Ratio", "aspect_ratio"),
-    SettingField("Stamp", "stamp"),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("ISO", "iso"),
-    SettingField("WB", "wb"),
-    SettingField("Color", "color_mode"),
+    SettingField("Rate", "photo_burst_frequence"),
+    SettingField("Aspect Ratio", "photo_size"),
+    SettingField("Stamp", "photo_stamp"),
+    SettingField("Metering Mode", "photo_metering_mode"),
+    SettingField("EV", "photo_ev_bias"),
+    SettingField("ISO", "photo_iso"),
+    SettingField("WB", "photo_wb"),
 )
 private val TIME_LAPSE_PHOTO_FIELDS = listOf(
-    SettingField("Interval", "interval"),
-    SettingField("Aspect Ratio", "aspect_ratio"),
-    SettingField("Stamp", "stamp"),
-    SettingField("Metering Mode", "metering_mode"),
-    SettingField("EV", "ev"),
-    SettingField("ISO", "iso"),
-    SettingField("WB", "wb"),
-    SettingField("Color", "color_mode"),
+    SettingField("Interval", "photo_time_lapse"),
+    SettingField("Aspect Ratio", "photo_size"),
+    SettingField("Stamp", "photo_stamp"),
+    SettingField("Metering Mode", "photo_metering_mode"),
+    SettingField("EV", "photo_ev_bias"),
+    SettingField("ISO", "photo_iso"),
+    SettingField("WB", "photo_wb"),
 )
 
 // General device settings ("Camera Settings" from the Settings hub) — not
-// tied to any shooting mode.
+// tied to any shooting mode. Includes a few fields confirmed to exist in
+// the protocol dump but not seen in the screen recordings (LED Mode, LCD
+// Brightness, Language) — likely just further down the same list.
 private val GENERAL_FIELDS = listOf(
-    SettingField("Video Standard", "video_standard"),
-    SettingField("Beep Volume", "beep_volume"),
-    SettingField("Default Mode", "default_mode"),
-    SettingField("Rotate", "rotate", isToggle = true),
-    SettingField("Auto Screen Lock", "auto_screen_lock"),
+    SettingField("Video Standard", "system_type"),
+    SettingField("Beep Volume", "prompt_volume"),
+    SettingField("Default Mode", "default_boot_mode"),
+    // Real value seen was "up", not "on"/"off" — not actually a toggle.
+    SettingField("Rotate", "auto_rotate"),
+    SettingField("Auto Screen Lock", "auto_lock_screen"),
     SettingField("Auto Power Off", "auto_power_off"),
-    SettingField("Wi-Fi Auto On", "wifi_auto_on", isToggle = true),
+    SettingField("Wi-Fi Auto On", "wifi_auto_start", isToggle = true),
+    SettingField("LED Mode", "led_mode"),
+    SettingField("LCD Brightness", "lcd_brightness"),
+    SettingField("Language", "language"),
 )
 
 private val MODE_LABELS = mapOf(
@@ -170,6 +180,14 @@ private val MODE_LABELS = mapOf(
     "self_timer" to "Timer",
     "burst" to "Burst",
     "time_lapse_photo" to "Time Lapse Photo",
+)
+
+// The only confirmed-real option list (from the Slow Motion mode's EV
+// picker in the stock app) — used as a quick-pick for any *_ev_bias field
+// instead of free-text entry.
+private val EV_OPTIONS = listOf(
+    "+2.0EV", "+1.7EV", "+1.3EV", "+1.0EV", "+0.7EV", "+0.3EV", "0",
+    "-0.3EV", "-0.7EV", "-1.0EV", "-1.3EV", "-1.7EV", "-2.0EV",
 )
 
 private fun fieldsFor(modeValue: String): List<SettingField> = when (modeValue) {
@@ -193,27 +211,32 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val fields = remember(modeValue) { fieldsFor(modeValue) }
 
     var values by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var pickerField by remember { mutableStateOf<SettingField?>(null) }
+    var editField by remember { mutableStateOf<SettingField?>(null) }
     var showGeneral by remember { mutableStateOf(false) }
+    var lastWriteStatus by remember { mutableStateOf<String?>(null) }
 
-    // Each guessed key that the camera doesn't recognize costs a full
-    // ~5s read timeout, so a batch of 10 fields fetched one after another
-    // (the control socket only allows one in-flight command) could block
-    // the whole list from appearing for the better part of a minute.
-    // Update `values` after each field resolves instead of waiting for the
-    // whole batch, so rows populate as their answers come in.
-    fun refreshValues(forFields: List<SettingField>) {
+    // One call gets every setting the camera has, mode-specific and general
+    // alike — GET_SETTING per-field doesn't work on this firmware, but
+    // GET_ALL_CURRENT_SETTINGS does.
+    fun refreshAll() {
         scope.launch {
-            for (f in forFields) {
-                val v = CameraSession.client.getSetting(f.key).getOrNull()?.optString("param")
-                if (!v.isNullOrEmpty()) values = values + (f.key to v)
-            }
+            values = CameraSession.client.getAllCurrentSettings().getOrNull()?.let { parseSettingsArray(it) } ?: values
         }
     }
 
-    LaunchedEffect(modeValue, showGeneral) {
-        values = emptyMap()
-        refreshValues(if (showGeneral) GENERAL_FIELDS else fields)
+    LaunchedEffect(Unit) { refreshAll() }
+
+    fun writeSetting(field: SettingField, newValue: String) {
+        scope.launch {
+            val result = CameraSession.client.setSetting(field.key, newValue)
+            lastWriteStatus = if (result.isSuccess) {
+                "Set ${field.label} = \"$newValue\" — camera replied: ${result.getOrNull()}"
+            } else {
+                "Set ${field.label} failed: ${result.exceptionOrNull()?.message}"
+            }
+            editField = null
+            refreshAll()
+        }
     }
 
     Scaffold(
@@ -232,14 +255,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
             GeneralSettingsList(
                 padding = padding,
                 values = values,
-                onFieldTap = { pickerField = it },
-                onToggle = { field, checked ->
-                    scope.launch {
-                        CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
-                        refreshValues(GENERAL_FIELDS)
-                    }
-                },
-                onOpenDeviceInfo = { /* shown inline below the list */ },
+                onFieldTap = { editField = it },
+                onToggle = { field, checked -> writeSetting(field, if (checked) "on" else "off") },
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -260,12 +277,24 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                         modifier = Modifier.padding(16.dp),
                     )
                 }
-                items(fields) { field -> SettingRow(field, values[field.key], onTap = { pickerField = field }, onToggle = { checked ->
-                    scope.launch {
-                        CameraSession.client.setSetting(field.key, if (checked) "on" else "off")
-                        refreshValues(fields)
+                items(fields) { field ->
+                    SettingRow(
+                        field,
+                        values[field.key],
+                        onTap = { editField = field },
+                        onToggle = { checked -> writeSetting(field, if (checked) "on" else "off") },
+                    )
+                }
+
+                lastWriteStatus?.let { status ->
+                    item {
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        )
                     }
-                }) }
+                }
 
                 item {
                     ListItem(
@@ -278,17 +307,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
         }
     }
 
-    pickerField?.let { field ->
-        OptionPickerDialog(
+    editField?.let { field ->
+        EditFieldDialog(
             field = field,
-            onDismiss = { pickerField = null },
-            onPicked = { picked ->
-                scope.launch {
-                    CameraSession.client.setSetting(field.key, picked)
-                    pickerField = null
-                    refreshValues(if (showGeneral) GENERAL_FIELDS else fields)
-                }
-            },
+            currentValue = values[field.key].orEmpty(),
+            onDismiss = { editField = null },
+            onSave = { newValue -> writeSetting(field, newValue) },
         )
     }
 }
@@ -320,70 +344,23 @@ private fun SettingRow(field: SettingField, value: String?, onTap: () -> Unit, o
 
 @Composable
 private fun GeneralSettingsList(
-    padding: androidx.compose.foundation.layout.PaddingValues,
+    padding: PaddingValues,
     values: Map<String, String>,
     onFieldTap: (SettingField) -> Unit,
     onToggle: (SettingField, Boolean) -> Unit,
-    onOpenDeviceInfo: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     var deviceInfo by remember { mutableStateOf("") }
     var storage by remember { mutableStateOf("") }
     var showRestoreConfirm by remember { mutableStateOf(false) }
-    var allSettingsDump by remember { mutableStateOf("") }
-    var modeSettingsDump by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         deviceInfo = CameraSession.client.getDeviceInfo().fold({ it.toString(2) }, { "error: ${it.message}" })
         CameraSession.client.getStorageSpaceBytes().getOrNull()?.let {
             storage = "%.1fG total".format(it / 1024.0 / 1024.0 / 1024.0)
         }
-        // GET_SETTING/GET_SINGLE_SETTING_OPTIONS (which take a "type" key)
-        // are failing with the same error code regardless of key name —
-        // that rules out individually-wrong key guesses and points at
-        // something structural about those two specific commands. These two
-        // take no "type" argument at all, so they're the next thing to
-        // check: if they succeed, their raw response should show the real
-        // setting key names directly instead of guessing them one at a time.
-        allSettingsDump = CameraSession.client.getAllCurrentSettings().fold({ it.toString(2) }, { "error: ${it.message}" })
-        modeSettingsDump = CameraSession.client.getCurrentModeSettings().fold({ it.toString(2) }, { "error: ${it.message}" })
     }
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-        item {
-            Text(
-                "Protocol Diagnostics",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(16.dp),
-            )
-        }
-        item {
-            Text(
-                "Raw GET_ALL_CURRENT_SETTINGS (msg_id 3):",
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-            Text(
-                allSettingsDump.ifBlank { "Loading..." },
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-        }
-        item {
-            Text(
-                "Raw GET_CURRENT_MODE_SETTINGS (msg_id 2053):",
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-            Text(
-                modeSettingsDump.ifBlank { "Loading..." },
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-            HorizontalDivider(thickness = 8.dp, modifier = Modifier.padding(top = 16.dp))
-        }
-
         item {
             Text(
                 "Camera Parameter",
@@ -440,72 +417,52 @@ private fun GeneralSettingsList(
     }
 }
 
+/**
+ * The camera doesn't support enumerating valid options per field on this
+ * firmware (GET_SINGLE_SETTING_OPTIONS fails uniformly) — so editing is a
+ * quick-pick for EV (the one confirmed real option list) and free-text entry
+ * for everything else, sending straight to SET_SETTING and showing its raw
+ * reply so a wrong guess is visible immediately.
+ */
 @Composable
-private fun OptionPickerDialog(field: SettingField, onDismiss: () -> Unit, onPicked: (String) -> Unit) {
-    // loading = null, resolved (success or failure) = non-null list. A
-    // previous version reassigned this back to null on failure, which is
-    // indistinguishable from "still loading" — the dialog spun forever on
-    // any timeout/error instead of ever showing the "no options" message.
-    var options by remember { mutableStateOf<List<String>?>(null) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    // Every field reporting "no options" (not a timeout/error) points at
-    // something systemic — wrong request shape, wrong msg_id, or this
-    // firmware just not implementing per-field option enumeration — rather
-    // than individually wrong key guesses. Surface the raw camera responses
-    // for both the options query and the current-value query so that's
-    // visible directly in the dialog instead of needing another round of
-    // screen recordings to diagnose.
-    var rawOptionsResponse by remember { mutableStateOf("") }
-    var rawValueResponse by remember { mutableStateOf("") }
+private fun EditFieldDialog(field: SettingField, currentValue: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(currentValue) }
+    val isEv = field.key.endsWith("_ev_bias")
 
-    LaunchedEffect(field.key) {
-        val optionsResult = CameraSession.client.getSettingOptions(field.key)
-        errorMessage = optionsResult.exceptionOrNull()?.message
-        rawOptionsResponse = optionsResult.fold({ it.toString(2) }, { "error: ${it.message}" })
-        options = optionsResult.getOrNull()?.let { json ->
-            json.optJSONArray("param")?.let { arr -> (0 until arr.length()).mapNotNull { arr.opt(it)?.toString() } }
-        } ?: emptyList()
-
-        val valueResult = CameraSession.client.getSetting(field.key)
-        rawValueResponse = valueResult.fold({ it.toString(2) }, { "error: ${it.message}" })
-    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         title = { Text(field.label) },
         text = {
-            val current = options
-            when {
-                current == null -> CircularProgressIndicator()
-                current.isEmpty() -> androidx.compose.foundation.layout.Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                ) {
-                    Text(
-                        "Camera reported no options for \"${field.key}\"" +
-                            (errorMessage?.let { ": $it" } ?: " (guessed key name — may not match this firmware)."),
-                    )
-                    Text(
-                        "Raw response to GET_SINGLE_SETTING_OPTIONS(\"${field.key}\"):",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(top = 12.dp),
-                    )
-                    Text(rawOptionsResponse, style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        "Raw response to GET_SETTING(\"${field.key}\"):",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(top = 12.dp),
-                    )
-                    Text(rawValueResponse, style = MaterialTheme.typography.bodySmall)
-                }
-                else -> androidx.compose.foundation.layout.Column {
-                    for (opt in current) {
+            if (isEv) {
+                androidx.compose.foundation.layout.Column {
+                    for (opt in EV_OPTIONS) {
                         Text(
                             opt,
-                            modifier = Modifier.fillMaxWidth().clickable { onPicked(opt) }.padding(vertical = 12.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { onSave(opt) }.padding(vertical = 10.dp),
                         )
                     }
                 }
+            } else {
+                androidx.compose.foundation.layout.Column {
+                    Text(
+                        "Current: $currentValue (key: \"${field.key}\")",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("New value") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                }
             }
         },
+        confirmButton = {
+            if (!isEv) {
+                Button(onClick = { onSave(text) }) { Text("Save") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

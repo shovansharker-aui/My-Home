@@ -104,7 +104,11 @@ class AmbaSocketClient(
     suspend fun setSetting(type: String, value: String): Result<JSONObject> =
         command(MsgId.SET_SETTING, type = type, param = value)
 
-    suspend fun setCameraMode(mode: String): Result<JSONObject> = setSetting("camera_mode", mode)
+    // Confirmed against the real camera's GET_ALL_CURRENT_SETTINGS dump:
+    // the shooting mode's real key is "mode_setting", not "camera_mode"
+    // (the value taken from SJCAM protocol research was right; the key
+    // name — our own guess — wasn't).
+    suspend fun setCameraMode(mode: String): Result<JSONObject> = setSetting("mode_setting", mode)
 
     suspend fun startViewfinder(): Result<JSONObject> =
         command(MsgId.BOSS_RESETVF, param = "none_force")
@@ -213,4 +217,20 @@ object CameraEndpoints {
     const val HTTP_PORT = 80
     const val RTSP_PORT = 554
     const val RTSP_URL = "rtsp://$HOST/live"
+}
+
+/**
+ * GET_ALL_CURRENT_SETTINGS' "param" is a JSON *array* of single-key objects
+ * (`[{"video_color":"Natural"},{"video_resolution":"3840x2160/30"},...]`),
+ * not one flat object — confirmed against the real camera. Flattens it into
+ * a plain key/value map for callers.
+ */
+fun parseSettingsArray(json: JSONObject): Map<String, String> {
+    val arr = json.optJSONArray("param") ?: return emptyMap()
+    val map = mutableMapOf<String, String>()
+    for (i in 0 until arr.length()) {
+        val obj = arr.optJSONObject(i) ?: continue
+        obj.keys().forEach { key -> map[key] = obj.optString(key) }
+    }
+    return map
 }
