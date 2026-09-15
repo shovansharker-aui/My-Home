@@ -91,21 +91,54 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             )
                         }
                     }
-                    items(r.pathProbes) { p ->
+                    items(r.pathProbes) { p -> ProbeCard(p) }
+
+                    if (r.linkedAssetProbes.isNotEmpty()) {
+                        item {
+                            Text(
+                                "Linked <script> assets (from the pages above)",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                    }
+                    items(r.linkedAssetProbes) { p -> ProbeCard(p) }
+
+                    if (r.inlineScripts.isNotEmpty()) {
+                        item {
+                            Text(
+                                "Inline <script> bodies",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                    }
+                    items(r.inlineScripts) { s ->
                         Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Column(Modifier.padding(8.dp)) {
-                                Text(p.path, style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "status=${p.httpStatus} type=${p.contentType} err=${p.error}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                p.bodyPreview?.takeIf { it.isNotBlank() }?.let {
-                                    Text(it, style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
+                            Text(
+                                s.take(4000),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(8.dp),
+                            )
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProbeCard(p: NetworkDiagnostics.PathProbeResult) {
+    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Column(Modifier.padding(8.dp)) {
+            Text(p.path, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "status=${p.httpStatus} type=${p.contentType} err=${p.error}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            p.bodyPreview?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
