@@ -1,6 +1,6 @@
 [versions]
-agp = "8.6.1"
-kotlin = "2.0.21"
+agp = "9.4.0"
+kotlin = "2.4.20"
 coreKtx = "1.13.1"
 lifecycle = "2.8.6"
 activityCompose = "1.9.2"
@@ -31,5 +31,6 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+# AGP 9's built-in Kotlin support replaces org.jetbrains.kotlin.android, but
+# the Compose Compiler is still a separate plugin as of Kotlin 2.0+.
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

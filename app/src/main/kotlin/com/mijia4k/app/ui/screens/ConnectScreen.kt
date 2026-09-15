@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -35,6 +36,7 @@ import kotlinx.coroutines.launch
 
 private enum class ConnState { UNKNOWN, CHECKING, REACHABLE, UNREACHABLE }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectScreen(
     onOpenShoot: () -> Unit,
