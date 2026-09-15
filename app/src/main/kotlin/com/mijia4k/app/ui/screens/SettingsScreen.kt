@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
@@ -36,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.CameraSession
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 private data class SettingField(val label: String, val key: String, val isToggle: Boolean = false)
 
@@ -402,12 +403,26 @@ private fun OptionPickerDialog(field: SettingField, onDismiss: () -> Unit, onPic
     // any timeout/error instead of ever showing the "no options" message.
     var options by remember { mutableStateOf<List<String>?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    // Every field reporting "no options" (not a timeout/error) points at
+    // something systemic — wrong request shape, wrong msg_id, or this
+    // firmware just not implementing per-field option enumeration — rather
+    // than individually wrong key guesses. Surface the raw camera responses
+    // for both the options query and the current-value query so that's
+    // visible directly in the dialog instead of needing another round of
+    // screen recordings to diagnose.
+    var rawOptionsResponse by remember { mutableStateOf("") }
+    var rawValueResponse by remember { mutableStateOf("") }
+
     LaunchedEffect(field.key) {
-        val result = CameraSession.client.getSettingOptions(field.key)
-        errorMessage = result.exceptionOrNull()?.message
-        options = result.getOrNull()?.let { json ->
+        val optionsResult = CameraSession.client.getSettingOptions(field.key)
+        errorMessage = optionsResult.exceptionOrNull()?.message
+        rawOptionsResponse = optionsResult.fold({ it.toString(2) }, { "error: ${it.message}" })
+        options = optionsResult.getOrNull()?.let { json ->
             json.optJSONArray("param")?.let { arr -> (0 until arr.length()).mapNotNull { arr.opt(it)?.toString() } }
         } ?: emptyList()
+
+        val valueResult = CameraSession.client.getSetting(field.key)
+        rawValueResponse = valueResult.fold({ it.toString(2) }, { "error: ${it.message}" })
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -417,10 +432,26 @@ private fun OptionPickerDialog(field: SettingField, onDismiss: () -> Unit, onPic
             val current = options
             when {
                 current == null -> CircularProgressIndicator()
-                current.isEmpty() -> Text(
-                    "Camera reported no options for \"${field.key}\"" +
-                        (errorMessage?.let { ": $it" } ?: " (guessed key name — may not match this firmware)."),
-                )
+                current.isEmpty() -> androidx.compose.foundation.layout.Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                ) {
+                    Text(
+                        "Camera reported no options for \"${field.key}\"" +
+                            (errorMessage?.let { ": $it" } ?: " (guessed key name — may not match this firmware)."),
+                    )
+                    Text(
+                        "Raw response to GET_SINGLE_SETTING_OPTIONS(\"${field.key}\"):",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                    Text(rawOptionsResponse, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Raw response to GET_SETTING(\"${field.key}\"):",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                    Text(rawValueResponse, style = MaterialTheme.typography.bodySmall)
+                }
                 else -> androidx.compose.foundation.layout.Column {
                     for (opt in current) {
                         Text(
