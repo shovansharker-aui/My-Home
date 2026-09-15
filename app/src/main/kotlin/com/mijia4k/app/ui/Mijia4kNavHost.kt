@@ -32,6 +32,7 @@ fun Mijia4kNavHost(navController: NavHostController) {
                     }
                 },
                 onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
+                onOpenGallery = { navController.navigate(Routes.GALLERY) },
             )
         }
         composable(Routes.SHOOT) {

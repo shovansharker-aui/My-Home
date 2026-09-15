@@ -18,8 +18,18 @@ class LocalPreviewCache(context: Context) {
 
     fun localFileFor(group: CameraHttpClient.MediaGroup): File = File(dir, keyFor(group))
 
+    /** All previews currently cached on disk (for the offline Gallery fallback). */
+    fun listCached(): List<File> = dir.listFiles { f -> !f.name.endsWith(".part") }?.toList().orEmpty()
+
+    /** Recovers the original filename from a cached file (see [keyFor] for the encoding). */
+    fun displayNameOf(cachedFile: File): String = cachedFile.name.substringAfter('_', cachedFile.name)
+
+    // Full remote path can collide-free identify a file across folders, but
+    // isn't a nice filename on its own; prefix a hash of the full path (for
+    // uniqueness) and keep the real filename after the first "_" so the
+    // offline path can recover a clean display name via [displayNameOf].
     private fun keyFor(group: CameraHttpClient.MediaGroup): String =
-        group.previewFile.path.removePrefix("/").replace('/', '_')
+        "${group.previewFile.path.hashCode()}_${group.previewFile.name}"
 
     suspend fun sync(
         client: CameraHttpClient,

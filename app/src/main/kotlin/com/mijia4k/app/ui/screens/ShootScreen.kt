@@ -27,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -60,6 +62,28 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
+private data class ModeOption(val label: String, val value: String)
+
+// The camera's own GET_SINGLE_SETTING_OPTIONS for camera_mode has come back
+// empty in testing so far, so this is the fallback shown until that's fixed
+// or proven otherwise: the mode set + value strings the user described from
+// years of using the camera's physical UI, with value strings guessed from
+// the one confirmed real example in public Ambarella protocol research
+// ("normal_record" for video). Tapping a mode still calls the real
+// SET_SETTING command and shows the camera's actual accept/reject response
+// in the status line, so wrong guesses surface immediately instead of
+// silently doing nothing.
+private val FALLBACK_MODES = listOf(
+    ModeOption("Photo", "photo"),
+    ModeOption("Video", "normal_record"),
+    ModeOption("Time Lapse", "time_lapse_record"),
+    ModeOption("Loop Video", "loop_record"),
+    ModeOption("Burst", "burst"),
+    ModeOption("Slow Motion", "slow_motion_record"),
+    ModeOption("Video+Photo", "video_photo"),
+    ModeOption("Timer", "self_timer"),
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShootScreen(
@@ -73,19 +97,18 @@ fun ShootScreen(
 
     var connected by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
+    var recordSeconds by remember { mutableStateOf(0) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
-    var modes by remember { mutableStateOf<List<String>>(emptyList()) }
-    var modesError by remember { mutableStateOf<String?>(null) }
+    var modes by remember { mutableStateOf(FALLBACK_MODES) }
     var currentMode by remember { mutableStateOf<String?>(null) }
     var liveInfo by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
 
     fun loadModes() {
         scope.launch {
-            val result = CameraSession.client.getSettingOptions("camera_mode")
-            modes = result.getOrNull()?.let { parseStringList(it) } ?: emptyList()
-            modesError = result.exceptionOrNull()?.message
-                ?: if (modes.isEmpty()) "camera reported no options for camera_mode" else null
+            val fromCamera = CameraSession.client.getSettingOptions("camera_mode")
+                .getOrNull()?.let { parseStringList(it) }
+            modes = if (fromCamera.isNullOrEmpty()) FALLBACK_MODES else fromCamera.map { ModeOption(prettify(it), it) }
         }
     }
 
@@ -117,11 +140,21 @@ fun ShootScreen(
         while (connected) {
             CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
                 val map = parseSettingsMap(json)
-                liveInfo = map.toList()
-                currentMode = map["camera_mode"]
+                liveInfo = liveInfoFor(currentMode, map)
+                map["camera_mode"]?.let { currentMode = it }
             }
             delay(3000)
         }
+    }
+
+    // Recording duration, straight from the camera (GET_RECORD_TIME) —
+    // only meaningful while actually recording.
+    LaunchedEffect(recording) {
+        while (recording) {
+            CameraSession.client.getRecordTimeSeconds().getOrNull()?.let { recordSeconds = it }
+            delay(1000)
+        }
+        if (!recording) recordSeconds = 0
     }
 
     val player = remember {
@@ -174,14 +207,16 @@ fun ShootScreen(
                     IconButton(onClick = onOpenGallery) {
                         Icon(Icons.Filled.Photo, contentDescription = "Gallery")
                     }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
                     IconButton(onClick = onOpenDiagnostics) {
                         Icon(Icons.Filled.BugReport, contentDescription = "Diagnostics")
                     }
                 },
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onOpenSettings) {
+                Icon(Icons.Filled.Settings, contentDescription = "Mode settings")
+            }
         },
     ) { padding ->
         Column(
@@ -207,8 +242,28 @@ fun ShootScreen(
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
-                    factory = { ctx -> PlayerView(ctx).apply { this.player = player } },
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            this.player = player
+                            // This is a live control feed with its own
+                            // shutter/record buttons below — ExoPlayer's
+                            // default tap-to-show-controls overlay (with a
+                            // seek bar/position readout that means nothing
+                            // for a live RTSP stream) is just confusing here.
+                            useController = false
+                        }
+                    },
                 )
+                if (isVideoLikeMode(currentMode) && recording) {
+                    Text(
+                        formatDuration(recordSeconds),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp),
+                    )
+                }
             }
 
             if (liveInfo.isNotEmpty()) {
@@ -275,40 +330,68 @@ fun ShootScreen(
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
-            if (modes.isNotEmpty()) {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(modes) { mode ->
-                        FilterChip(
-                            selected = mode == currentMode,
-                            enabled = connected && !busy,
-                            onClick = {
-                                runCommand("Set mode $mode") { CameraSession.client.setCameraMode(mode) }
-                                currentMode = mode
-                            },
-                            label = { Text(mode) },
-                        )
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        modesError ?: "Not loaded yet",
-                        style = MaterialTheme.typography.bodySmall,
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(modes) { mode ->
+                    FilterChip(
+                        selected = mode.value == currentMode,
+                        enabled = connected && !busy,
+                        onClick = {
+                            runCommand("Set mode ${mode.label}") { CameraSession.client.setCameraMode(mode.value) }
+                            currentMode = mode.value
+                        },
+                        label = { Text(mode.label) },
                     )
-                    if (connected) {
-                        AssistChip(onClick = { loadModes() }, label = { Text("Retry") })
-                    }
                 }
             }
         }
     }
+}
+
+private fun prettify(rawValue: String): String =
+    rawValue.replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+private fun isVideoLikeMode(mode: String?): Boolean =
+    mode == null || mode.contains("record") || mode.contains("video") || mode.contains("loop") || mode.contains("slow")
+
+private fun formatDuration(totalSeconds: Int): String {
+    val m = totalSeconds / 60
+    val s = totalSeconds % 60
+    return "%d:%02d".format(m, s)
+}
+
+/**
+ * Picks a handful of relevant fields to show for the current mode out of
+ * whatever the camera's settings dump contains. The real key names this
+ * camera uses aren't confirmed yet, so this matches loosely by substring
+ * against a shortlist of plausible names per field — if/when the real dump
+ * shows different key names, extend the candidate lists below rather than
+ * guessing a fixed schema.
+ */
+private fun liveInfoFor(mode: String?, settings: Map<String, String>): List<Pair<String, String>> {
+    fun find(vararg candidates: String): Pair<String, String>? {
+        for (c in candidates) {
+            val hit = settings.entries.firstOrNull { it.key.contains(c, ignoreCase = true) }
+            if (hit != null) return prettify(hit.key) to hit.value
+        }
+        return null
+    }
+
+    val wanted = when {
+        mode == null -> listOf("iso", "resolution")
+        mode.contains("photo") && !mode.contains("video") -> listOf("iso", "shutter", "meter")
+        mode.contains("slow") -> listOf("slow", "fps", "resolution")
+        mode.contains("time_lapse") || mode.contains("timelapse") -> listOf("interval", "resolution")
+        mode.contains("loop") -> listOf("loop", "resolution")
+        mode.contains("burst") -> listOf("burst", "iso")
+        mode.contains("timer") -> listOf("timer", "delay")
+        mode.contains("video") || mode.contains("record") -> listOf("resolution", "iso")
+        else -> listOf("iso", "resolution")
+    }
+
+    return wanted.mapNotNull { find(it) }
 }
 
 /** Best-effort parse of a msg_id=9 (GET_SINGLE_SETTING_OPTIONS) reply into option names. */

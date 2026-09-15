@@ -1,12 +1,15 @@
 package com.mijia4k.app.ui.screens
 
+import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,12 +18,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,13 +50,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import coil3.ImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.rememberAsyncImagePainter
 import com.mijia4k.app.net.CameraHttpClient
@@ -56,6 +70,19 @@ import com.mijia4k.app.net.CameraImageLoader
 import com.mijia4k.app.net.LocalPreviewCache
 import com.mijia4k.app.net.MediaStoreSaver
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+
+/** One thumbnail's worth of data, whether it came from the live camera listing or the offline cache. */
+private data class GalleryItem(
+    val key: String,
+    val name: String,
+    val isVideo: Boolean,
+    val thumbModel: Any,
+    val previewFile: CameraHttpClient.CameraFile?,
+    val originalFile: CameraHttpClient.CameraFile?,
+    val localFile: File?,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,31 +94,58 @@ fun GalleryScreen(onBack: () -> Unit) {
     val imageLoader = remember { CameraImageLoader.get(context) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var groups by remember { mutableStateOf<List<CameraHttpClient.MediaGroup>>(emptyList()) }
+    var items by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
+    var offline by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var loading by remember { mutableStateOf(true) }
-    var syncing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
-    var viewerGroup by remember { mutableStateOf<CameraHttpClient.MediaGroup?>(null) }
+    var viewerIndex by remember { mutableStateOf<Int?>(null) }
 
     val selectionMode = selected.isNotEmpty()
+
+    fun buildItems(groups: List<CameraHttpClient.MediaGroup>): List<GalleryItem> = groups.map { group ->
+        val local = previewCache.localFileFor(group).takeIf { it.exists() }
+        GalleryItem(
+            key = group.previewFile.path,
+            name = group.previewFile.name,
+            isVideo = group.previewFile.isVideo,
+            thumbModel = local ?: group.previewFile.url,
+            previewFile = group.previewFile,
+            originalFile = group.originalFile,
+            localFile = local,
+        )
+    }
 
     fun refresh() {
         loading = true
         error = null
         selected = emptySet()
         scope.launch {
-            try {
-                val loaded = client.listAllMedia()
-                groups = loaded
+            val online = withTimeoutOrNull(6000) { runCatching { client.listAllMedia() }.getOrNull() }
+            if (online != null) {
+                offline = false
+                items = buildItems(online)
                 loading = false
-                syncing = true
-                previewCache.sync(client, loaded)
-                syncing = false
-            } catch (e: Exception) {
-                error = e.message ?: "Failed to load media"
+                previewCache.sync(client, online)
+                // Pick up any previews that just finished downloading.
+                items = buildItems(online)
+            } else {
+                offline = true
+                items = previewCache.listCached().map { f ->
+                    val ext = f.name.substringAfterLast('.', "").lowercase()
+                    GalleryItem(
+                        key = f.absolutePath,
+                        name = previewCache.displayNameOf(f),
+                        isVideo = ext in CameraHttpClient.VIDEO_EXTENSIONS,
+                        thumbModel = f,
+                        previewFile = null,
+                        originalFile = null,
+                        localFile = f,
+                    )
+                }
                 loading = false
+                if (items.isEmpty()) error = "Camera unreachable and nothing cached locally yet"
             }
         }
     }
@@ -99,22 +153,20 @@ fun GalleryScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) { refresh() }
 
     fun downloadSelected() {
-        val toDownload = groups.filter { it.previewFile.path in selected }
+        val toDownload = items.filter { it.key in selected }
         downloading = true
         scope.launch {
             var ok = 0
             var total = 0
-            for (g in toDownload) {
-                total++
-                if (runCatching { MediaStoreSaver.saveToDownloads(context, g.previewFile, client) }.getOrDefault(false)) ok++
-                g.originalFile?.let { original ->
-                    total++
-                    if (runCatching { MediaStoreSaver.saveToDownloads(context, original, client) }.getOrDefault(false)) ok++
-                }
+            for (item in toDownload) {
+                item.previewFile?.let { total++; if (runCatching { MediaStoreSaver.saveToDownloads(context, it, client) }.getOrDefault(false)) ok++ }
+                item.originalFile?.let { total++; if (runCatching { MediaStoreSaver.saveToDownloads(context, it, client) }.getOrDefault(false)) ok++ }
             }
             downloading = false
             selected = emptySet()
-            snackbarHostState.showSnackbar("Downloaded $ok/$total file(s) to Downloads/Mijia4K")
+            snackbarHostState.showSnackbar(
+                if (total == 0) "Nothing downloadable while offline" else "Downloaded $ok/$total file(s) to Downloads/Mijia4K",
+            )
         }
     }
 
@@ -122,7 +174,7 @@ fun GalleryScreen(onBack: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbarHostState) { Snackbar(it) } },
         topBar = {
             TopAppBar(
-                title = { Text(if (selectionMode) "${selected.size} selected" else "Gallery") },
+                title = { Text(if (selectionMode) "${selected.size} selected" else if (offline) "Gallery (offline)" else "Gallery") },
                 navigationIcon = {
                     IconButton(onClick = { if (selectionMode) selected = emptySet() else onBack() }) {
                         Icon(
@@ -144,45 +196,33 @@ fun GalleryScreen(onBack: () -> Unit) {
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
                 loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                error != null -> Text(
-                    "Couldn't load the camera's media: $error",
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                )
-                groups.isEmpty() -> Text("No photos or videos on the camera", modifier = Modifier.align(Alignment.Center))
+                error != null -> Text(error.orEmpty(), modifier = Modifier.align(Alignment.Center).padding(24.dp))
+                items.isEmpty() -> Text("No photos or videos found", modifier = Modifier.align(Alignment.Center))
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(2.dp),
                 ) {
-                    items(groups, key = { it.previewFile.path }) { group ->
-                        val local = previewCache.localFileFor(group).takeIf { it.exists() }
+                    items(items, key = { it.key }) { item ->
+                        val index = items.indexOf(item)
                         GridCell(
-                            group = group,
-                            model = local ?: group.previewFile.url,
+                            item = item,
                             imageLoader = imageLoader,
-                            selected = group.previewFile.path in selected,
+                            selected = item.key in selected,
                             selectionMode = selectionMode,
                             onTap = {
                                 if (selectionMode) {
-                                    val key = group.previewFile.path
-                                    selected = if (key in selected) selected - key else selected + key
+                                    selected = if (item.key in selected) selected - item.key else selected + item.key
                                 } else {
-                                    viewerGroup = group
+                                    viewerIndex = index
                                 }
                             },
                             onLongPress = {
-                                val key = group.previewFile.path
-                                selected = if (key in selected) selected - key else selected + key
+                                selected = if (item.key in selected) selected - item.key else selected + item.key
                             },
                         )
                     }
                 }
-            }
-            if (syncing) {
-                Text(
-                    "Syncing previews...",
-                    modifier = Modifier.align(Alignment.TopCenter).padding(8.dp),
-                )
             }
             if (downloading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp))
@@ -190,24 +230,23 @@ fun GalleryScreen(onBack: () -> Unit) {
         }
     }
 
-    viewerGroup?.let { group ->
-        val local = previewCache.localFileFor(group).takeIf { it.exists() }
-        MediaViewer(
-            model = local ?: group.previewFile.url,
-            isVideo = group.previewFile.isVideo,
-            name = group.previewFile.name,
+    viewerIndex?.let { startIndex ->
+        MediaPagerViewer(
+            items = items,
+            startIndex = startIndex,
             imageLoader = imageLoader,
-            onClose = { viewerGroup = null },
-            onDownload = {
+            client = client,
+            previewCache = previewCache,
+            onClose = { viewerIndex = null },
+            onDownload = { item ->
                 scope.launch {
                     var ok = 0
-                    var total = 1
-                    if (runCatching { MediaStoreSaver.saveToDownloads(context, group.previewFile, client) }.getOrDefault(false)) ok++
-                    group.originalFile?.let {
-                        total++
-                        if (runCatching { MediaStoreSaver.saveToDownloads(context, it, client) }.getOrDefault(false)) ok++
-                    }
-                    snackbarHostState.showSnackbar("Downloaded $ok/$total file(s) to Downloads/Mijia4K")
+                    var total = 0
+                    item.previewFile?.let { total++; if (runCatching { MediaStoreSaver.saveToDownloads(context, it, client) }.getOrDefault(false)) ok++ }
+                    item.originalFile?.let { total++; if (runCatching { MediaStoreSaver.saveToDownloads(context, it, client) }.getOrDefault(false)) ok++ }
+                    snackbarHostState.showSnackbar(
+                        if (total == 0) "Not available offline" else "Downloaded $ok/$total file(s) to Downloads/Mijia4K",
+                    )
                 }
             },
         )
@@ -216,9 +255,8 @@ fun GalleryScreen(onBack: () -> Unit) {
 
 @Composable
 private fun GridCell(
-    group: CameraHttpClient.MediaGroup,
-    model: Any,
-    imageLoader: coil3.ImageLoader,
+    item: GalleryItem,
+    imageLoader: ImageLoader,
     selected: Boolean,
     selectionMode: Boolean,
     onTap: () -> Unit,
@@ -231,12 +269,12 @@ private fun GridCell(
             .combinedClickable(onClick = onTap, onLongClick = onLongPress),
     ) {
         AsyncImage(
-            model = model,
-            contentDescription = group.previewFile.name,
+            model = item.thumbModel,
+            contentDescription = item.name,
             imageLoader = imageLoader,
             modifier = Modifier.fillMaxSize().background(Color.Black),
         )
-        if (group.previewFile.isVideo) {
+        if (item.isVideo) {
             Icon(
                 Icons.Filled.PlayCircle,
                 contentDescription = "Video",
@@ -245,11 +283,7 @@ private fun GridCell(
             )
         }
         if (selectionMode) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onTap() },
-                modifier = Modifier.align(Alignment.TopEnd),
-            )
+            Checkbox(checked = selected, onCheckedChange = { onTap() }, modifier = Modifier.align(Alignment.TopEnd))
         } else if (selected) {
             Icon(
                 Icons.Filled.Check,
@@ -261,52 +295,140 @@ private fun GridCell(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MediaViewer(
-    model: Any,
-    isVideo: Boolean,
-    name: String,
-    imageLoader: coil3.ImageLoader,
+private fun MediaPagerViewer(
+    items: List<GalleryItem>,
+    startIndex: Int,
+    imageLoader: ImageLoader,
+    client: CameraHttpClient,
+    previewCache: LocalPreviewCache,
     onClose: () -> Unit,
-    onDownload: () -> Unit,
+    onDownload: (GalleryItem) -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(initialPage = startIndex) { items.size }
+    var showInfo by remember { mutableStateOf(false) }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (isVideo) {
-            val player = remember(model) {
-                val uri = when (model) {
-                    is java.io.File -> android.net.Uri.fromFile(model)
-                    else -> android.net.Uri.parse(model.toString())
-                }
-                ExoPlayer.Builder(context).build().apply {
-                    setMediaItem(MediaItem.fromUri(uri))
-                    prepare()
-                    playWhenReady = true
-                }
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            val item = items[page]
+            if (item.isVideo) {
+                VideoPage(item)
+            } else {
+                ZoomableImage(model = item.localFile ?: item.previewFile?.url ?: item.thumbModel, imageLoader = imageLoader, contentDescription = item.name)
             }
-            DisposableEffect(model) { onDispose { player.release() } }
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx -> PlayerView(ctx).apply { this.player = player } },
-            )
-        } else {
-            Image(
-                painter = rememberAsyncImagePainter(model = model, imageLoader = imageLoader),
-                contentDescription = name,
-                modifier = Modifier.fillMaxSize(),
-            )
         }
+
+        val current = items[pagerState.currentPage]
 
         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
             Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
         }
-        IconButton(onClick = onDownload, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-            Icon(Icons.Filled.Download, contentDescription = "Download", tint = Color.White)
+        Row(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+            IconButton(onClick = {
+                scope.launch {
+                    val fileToShare = current.localFile ?: run {
+                        val group = current.previewFile ?: return@run null
+                        val target = File(context.cacheDir, group.name)
+                        runCatching {
+                            target.outputStream().use { out -> client.downloadTo(group, out) }
+                        }
+                        target.takeIf { it.exists() }
+                    }
+                    if (fileToShare == null) return@launch
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", fileToShare)
+                    val mime = if (current.isVideo) "video/mp4" else "image/*"
+                    context.startActivity(
+                        Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = mime
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            },
+                            "Share",
+                        ),
+                    )
+                }
+            }) {
+                Icon(Icons.Filled.Share, contentDescription = "Share", tint = Color.White)
+            }
+            IconButton(onClick = { showInfo = true }) {
+                Icon(Icons.Filled.Info, contentDescription = "Info", tint = Color.White)
+            }
+            IconButton(onClick = { onDownload(current) }) {
+                Icon(Icons.Filled.Download, contentDescription = "Download", tint = Color.White)
+            }
         }
         Text(
-            name,
+            current.name,
             color = Color.White,
             modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(12.dp),
         )
     }
+
+    if (showInfo) {
+        val current = items[pagerState.currentPage]
+        AlertDialog(
+            onDismissRequest = { showInfo = false },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { showInfo = false }) { Text("Close") } },
+            title = { Text(current.name) },
+            text = {
+                Column {
+                    Text("Type: ${if (current.isVideo) "Video" else "Image"}")
+                    current.previewFile?.sizeBytes?.let { Text("Preview size: ${it / 1024} KB") }
+                    current.originalFile?.let { Text("Original: ${it.name} (${(it.sizeBytes ?: 0) / 1024} KB)") }
+                        ?: Text("Original: not available${if (current.previewFile == null) " (offline)" else ""}")
+                    Text("Cached locally: ${current.localFile != null}")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun VideoPage(item: GalleryItem) {
+    val context = LocalContext.current
+    val model = item.localFile ?: item.previewFile?.url ?: item.thumbModel
+    val player = remember(item.key) {
+        val uri = when (model) {
+            is File -> android.net.Uri.fromFile(model)
+            else -> android.net.Uri.parse(model.toString())
+        }
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(uri))
+            prepare()
+            playWhenReady = true
+        }
+    }
+    DisposableEffect(item.key) { onDispose { player.release() } }
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { ctx -> PlayerView(ctx).apply { this.player = player } },
+    )
+}
+
+@Composable
+private fun ZoomableImage(model: Any, imageLoader: ImageLoader, contentDescription: String?) {
+    var scale by remember(model) { mutableStateOf(1f) }
+    var offset by remember(model) { mutableStateOf(Offset.Zero) }
+    Image(
+        painter = rememberAsyncImagePainter(model = model, imageLoader = imageLoader),
+        contentDescription = contentDescription,
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offset.x,
+                translationY = offset.y,
+            )
+            .pointerInput(model) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 5f)
+                    offset = if (scale <= 1f) Offset.Zero else offset + pan
+                }
+            },
+    )
 }
