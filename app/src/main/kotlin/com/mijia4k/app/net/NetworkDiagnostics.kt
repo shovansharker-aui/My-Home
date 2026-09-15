@@ -53,21 +53,20 @@ class NetworkDiagnostics(
         12080 to "unknown",
     )
 
+    // Confirmed against the real camera: / and /DCIM/ are plain Cherokee
+    // directory-listing HTML (not a JSON/AJAX API) — see CameraHttpClient,
+    // which parses these listings for real. /DCIM/100MEDIA/ is the actual
+    // photo/video folder. Root also lists live/, mjpeg/, pref/ and shutter/
+    // as pseudo-folders that look like GET-triggered actions; shutter/ is
+    // deliberately NOT auto-probed here since a plain GET might actually
+    // fire the shutter on every diagnostic scan.
     private val candidatePaths = listOf(
         "/",
         "/DCIM/",
-        "/dcim/",
-        "/tmp/SD0/",
-        "/tmp/SD0/DCIM/",
-        "/sd/",
-        "/sd/DCIM/",
-        "/mnt/sd/DCIM/",
-        "/media/",
-        "/list",
-        "/filelist",
-        "/file_list",
-        "/api/file/list",
-        "/cgi-bin/list",
+        "/DCIM/100MEDIA/",
+        "/live/",
+        "/mjpeg/",
+        "/pref/",
     )
 
     suspend fun run(): DiagnosticsReport = withContext(Dispatchers.IO) {
