@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,10 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.CameraEndpoints
-import com.mijia4k.app.net.NetworkDiagnostics
+import com.mijia4k.app.net.CameraSession
 import kotlinx.coroutines.launch
 
-private enum class ConnState { UNKNOWN, CHECKING, REACHABLE, UNREACHABLE }
+private enum class ConnState { UNKNOWN, CHECKING, CONNECTED, FAILED }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +47,22 @@ fun ConnectScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(ConnState.UNKNOWN) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    fun connect() {
+        state = ConnState.CHECKING
+        errorMessage = null
+        scope.launch {
+            val result = CameraSession.connect()
+            state = if (result.isSuccess) ConnState.CONNECTED else ConnState.FAILED
+            errorMessage = result.exceptionOrNull()?.message
+        }
+    }
+
+    // Auto-connect on open: the camera's own screen sits on "connecting..."
+    // until a client completes the control-socket handshake, so do that as
+    // soon as this screen is shown rather than waiting for a button tap.
+    LaunchedEffect(Unit) { connect() }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Mijia 4K") }) }) { padding ->
         Column(
@@ -65,19 +82,15 @@ fun ConnectScreen(
 
             when (state) {
                 ConnState.UNKNOWN -> Text("Not checked yet")
-                ConnState.CHECKING -> Text("Checking ${CameraEndpoints.HOST} ...")
-                ConnState.REACHABLE -> Text("Camera reachable at ${CameraEndpoints.HOST}")
-                ConnState.UNREACHABLE -> Text("Camera not reachable. Are you on the MiCam_ hotspot?")
+                ConnState.CHECKING -> Text("Connecting to ${CameraEndpoints.HOST} ...")
+                ConnState.CONNECTED -> Text("Connected — camera's screen should now show its main screen")
+                ConnState.FAILED -> Text(
+                    "Couldn't connect${errorMessage?.let { ": $it" } ?: ""}. Are you on the MiCam_ hotspot?",
+                )
             }
 
-            Button(onClick = {
-                state = ConnState.CHECKING
-                scope.launch {
-                    val report = NetworkDiagnostics().run()
-                    state = if (report.hostReachable) ConnState.REACHABLE else ConnState.UNREACHABLE
-                }
-            }) {
-                Text("Check connection")
+            Button(onClick = { connect() }) {
+                Text(if (state == ConnState.CHECKING) "Connecting..." else "Reconnect")
             }
 
             TextButton(onClick = {
