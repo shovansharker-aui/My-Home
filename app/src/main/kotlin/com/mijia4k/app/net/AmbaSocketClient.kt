@@ -176,6 +176,10 @@ class AmbaSocketClient(
     // the shooting mode's real key is "mode_setting", not "camera_mode".
     suspend fun setCameraMode(mode: String): Result<JSONObject> = setSetting("mode_setting", mode)
 
+    /** Permanently removes a file from the camera's SD card. [path] is the server-relative path, e.g. `/DCIM/100MEDIA/VID_20260919_001.MP4`. */
+    suspend fun deleteFile(path: String): Result<JSONObject> =
+        command(MsgId.DELETE_FILE, param = path)
+
     private suspend fun command(
         msgId: Int,
         type: String? = null,
@@ -331,6 +335,7 @@ object MsgId {
     const val GET_RECORD_TIME = 515
     const val TAKE_PHOTO = 769
     const val SET_WIFI = 2055
+    const val DELETE_FILE = 1281
 }
 
 object CameraEndpoints {

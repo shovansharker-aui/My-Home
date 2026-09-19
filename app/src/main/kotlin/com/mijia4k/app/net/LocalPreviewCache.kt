@@ -18,7 +18,8 @@ import java.io.File
 class LocalPreviewCache(context: Context) {
     private val dir = File(context.filesDir, "camera_previews").apply { mkdirs() }
 
-    fun localFileFor(group: CameraHttpClient.MediaGroup): File = File(dir, keyFor(group))
+    fun localFileFor(group: CameraHttpClient.MediaGroup): File? =
+        keyFor(group)?.let { File(dir, it) }
 
     /** All posters currently cached on disk (for the offline Gallery fallback). */
     fun listCached(): List<File> =
@@ -31,8 +32,8 @@ class LocalPreviewCache(context: Context) {
     // isn't a nice filename on its own; prefix a hash of the full path (for
     // uniqueness) and keep the real filename after the first "_" so the
     // offline path can recover a clean display name via [displayNameOf].
-    private fun keyFor(group: CameraHttpClient.MediaGroup): String =
-        "${group.thumbSource.path.hashCode()}_${group.thumbSource.name}"
+    private fun keyFor(group: CameraHttpClient.MediaGroup): String? =
+        group.posterFile?.let { "${it.path.hashCode()}_${it.name}" }
 
     suspend fun sync(
         client: CameraHttpClient,
@@ -40,18 +41,21 @@ class LocalPreviewCache(context: Context) {
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): Unit = syncLock.withLock {
         withContext(Dispatchers.IO) {
-            val expected = groups.mapTo(HashSet()) { keyFor(it) }
+            val expected = groups.mapNotNullTo(HashSet()) { keyFor(it) }
 
             dir.listFiles()?.forEach { local ->
                 if (local.name !in expected) local.delete()
             }
 
             groups.forEachIndexed { index, group ->
+                // Only photos have something small enough to be worth caching.
+                // Videos would mean pulling a 47 MB proxy per tile.
+                val poster = group.posterFile
                 val target = localFileFor(group)
-                if (!target.exists()) {
+                if (poster != null && target != null && !target.exists()) {
                     val tmp = File(dir, target.name + PART_SUFFIX)
                     runCatching {
-                        tmp.outputStream().use { out -> client.downloadTo(group.thumbSource, out) }
+                        tmp.outputStream().use { out -> client.downloadTo(poster, out) }
                         tmp.renameTo(target)
                     }.onFailure { tmp.delete() }
                 }

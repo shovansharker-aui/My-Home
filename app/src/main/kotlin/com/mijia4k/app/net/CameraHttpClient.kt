@@ -38,8 +38,13 @@ class CameraHttpClient(
         /** Decodable by the image loader — a RAW `.DNG` is an image but not this. */
         val isDisplayableImage: Boolean get() = extension in DISPLAYABLE_IMAGE_EXTENSIONS
 
-        /** A camera-generated poster frame — never viewable content in its own right. */
-        val isThumbnail: Boolean get() = extension in THUMBNAIL_EXTENSIONS
+        /**
+         * A `.THM` sibling. On this camera that is **not** a thumbnail image
+         * despite the extension — it's a lower-resolution copy of the video
+         * (47 MB against the original's 545 MB, same `ftyp` MP4 header), which
+         * makes it the far better thing to stream over the camera's hotspot.
+         */
+        val isProxyVideo: Boolean get() = extension in PROXY_EXTENSIONS
     }
 
     // Matches one listing row: the link (name/href) and, for files, the
@@ -83,17 +88,26 @@ class CameraHttpClient(
      */
     data class MediaGroup(
         val baseName: String,
-        /** The real photo or video: what the viewer shows and plays. */
+        /** The full-resolution original — what "download" saves. */
         val mediaFile: CameraFile,
-        /** Small companion poster, when the camera made one. */
-        val thumbFile: CameraFile?,
-        /** Full-resolution sibling worth downloading too (e.g. a RAW `.DNG`). */
+        /** Lower-resolution copy to stream instead of the original, if the camera made one. */
+        val proxyFile: CameraFile?,
+        /** Extra sibling worth downloading too (a RAW `.DNG`). */
         val rawFile: CameraFile?,
     ) {
         val isVideo: Boolean get() = mediaFile.isVideo
 
-        /** Cheapest thing to load for a grid cell — the poster if there is one. */
-        val thumbSource: CameraFile get() = thumbFile ?: mediaFile
+        /** Streaming a 47 MB proxy beats a 545 MB original over this hotspot. */
+        val playbackFile: CameraFile get() = proxyFile ?: mediaFile
+
+        /**
+         * Something the image loader can cheaply turn into a grid thumbnail.
+         * Photos have one (the JPG itself); videos don't — this camera
+         * exposes no thumbnail endpoint, and its `.THM` is a whole second
+         * video, so there is nothing small to show. Grid cells fall back to a
+         * play badge rather than downloading tens of megabytes per tile.
+         */
+        val posterFile: CameraFile? get() = mediaFile.takeIf { it.isDisplayableImage }
 
         /** Everything worth saving when the user downloads this shot. */
         val downloadable: List<CameraFile> get() = listOfNotNull(mediaFile, rawFile)
@@ -114,25 +128,27 @@ class CameraHttpClient(
 
             files.groupBy { it.path.substringBeforeLast('.') }
                 .mapNotNull { (baseName, group) ->
-                    val thumb = group.firstOrNull { it.isThumbnail }
-                    val playable = group.filter { !it.isThumbnail }
-                    // A lone .THM with no matching video/photo (an orphaned
-                    // poster — this 8-year-old card has plenty left over) has
-                    // nothing to show; it would just be a black tile.
+                    val proxy = group.firstOrNull { it.isProxyVideo }
+                    val originals = group.filter { !it.isProxyVideo }
+                    // A lone .THM with no original beside it (this 8-year-old
+                    // card has leftovers) has nothing to anchor a tile to.
                     // Prefer the JPG over its RAW sibling: both are "images",
                     // but only one of them the image loader can decode.
-                    val media = playable.firstOrNull { it.isVideo }
-                        ?: playable.firstOrNull { it.isDisplayableImage }
-                        ?: playable.firstOrNull { it.isImage }
+                    val media = originals.firstOrNull { it.isVideo }
+                        ?: originals.firstOrNull { it.isDisplayableImage }
+                        ?: originals.firstOrNull { it.isImage }
                         ?: return@mapNotNull null
                     MediaGroup(
                         baseName = baseName,
                         mediaFile = media,
-                        thumbFile = thumb,
-                        rawFile = playable.firstOrNull { it != media },
+                        proxyFile = proxy,
+                        rawFile = originals.firstOrNull { it != media },
                     )
                 }
-                .sortedByDescending { it.baseName }
+                // Newest first. Sorting on the whole basename would group all
+                // VID_* after all IMG_* regardless of when they were shot, so
+                // order by the timestamp the camera bakes into the name.
+                .sortedByDescending { it.mediaFile.name.substringAfter('_', it.baseName) }
         }
 
     suspend fun downloadTo(file: CameraFile, out: OutputStream): Long = withContext(Dispatchers.IO) {
@@ -159,7 +175,7 @@ class CameraHttpClient(
         val VIDEO_EXTENSIONS = setOf("mp4", "mov", "avi", "ts")
         val DISPLAYABLE_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif")
         val IMAGE_EXTENSIONS = DISPLAYABLE_IMAGE_EXTENSIONS + setOf("dng", "raw")
-        val THUMBNAIL_EXTENSIONS = setOf("thm")
+        val PROXY_EXTENSIONS = setOf("thm")
 
         // One client for the whole app: each OkHttpClient carries its own
         // connection pool and dispatcher threads, and a fresh one was being

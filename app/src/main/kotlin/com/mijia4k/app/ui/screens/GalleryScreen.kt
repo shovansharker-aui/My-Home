@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayCircle
@@ -74,6 +75,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.rememberAsyncImagePainter
 import com.mijia4k.app.net.CameraHttpClient
 import com.mijia4k.app.net.CameraImageLoader
+import com.mijia4k.app.net.CameraSession
 import com.mijia4k.app.net.LocalPreviewCache
 import com.mijia4k.app.net.MediaStoreSaver
 import kotlinx.coroutines.launch
@@ -85,9 +87,11 @@ private data class GalleryItem(
     val key: String,
     val name: String,
     val isVideo: Boolean,
-    /** Small poster for the grid. */
-    val thumbModel: Any,
-    /** The full photo/video this tile opens — null when only a cached poster exists. */
+    /** Something the image loader can render for the grid; null for videos on this camera. */
+    val thumbModel: Any?,
+    /** What the viewer streams — the low-res proxy for videos when one exists. */
+    val playbackFile: CameraHttpClient.CameraFile?,
+    /** The full-resolution original, for share/info. */
     val mediaFile: CameraHttpClient.CameraFile?,
     val downloadable: List<CameraHttpClient.CameraFile>,
     val localThumb: File?,
@@ -109,6 +113,8 @@ fun GalleryScreen(onBack: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     // Keyed, not indexed: the list can be replaced while the viewer is open
     // (the sync pass rebuilds it), and an index into the old list then either
     // showed the wrong shot or crashed on out-of-bounds.
@@ -117,12 +123,13 @@ fun GalleryScreen(onBack: () -> Unit) {
     val selectionMode = selected.isNotEmpty()
 
     fun buildItems(groups: List<CameraHttpClient.MediaGroup>): List<GalleryItem> = groups.map { group ->
-        val cachedThumb = previewCache.localFileFor(group).takeIf { it.exists() }
+        val cachedThumb = previewCache.localFileFor(group)?.takeIf { it.exists() }
         GalleryItem(
             key = group.mediaFile.path,
             name = group.mediaFile.name,
             isVideo = group.isVideo,
-            thumbModel = cachedThumb ?: group.thumbSource.url,
+            thumbModel = cachedThumb ?: group.posterFile?.url,
+            playbackFile = group.playbackFile,
             mediaFile = group.mediaFile,
             downloadable = group.downloadable,
             localThumb = cachedThumb,
@@ -152,6 +159,7 @@ fun GalleryScreen(onBack: () -> Unit) {
                         name = name,
                         isVideo = name.substringAfterLast('.', "").lowercase() in CameraHttpClient.VIDEO_EXTENSIONS,
                         thumbModel = f,
+                        playbackFile = null,
                         mediaFile = null,
                         downloadable = emptyList(),
                         localThumb = f,
@@ -196,6 +204,34 @@ fun GalleryScreen(onBack: () -> Unit) {
         }
     }
 
+    fun deleteSelected() {
+        val toDelete = items.filter { it.key in selected }
+        deleting = true
+        scope.launch {
+            var ok = 0
+            var failed = 0
+            for (item in toDelete) {
+                // Delete every file that belongs to this group: the original,
+                // its proxy (.THM), and its RAW (.DNG) if present.
+                val paths = item.downloadable.map { it.path } +
+                    listOfNotNull(item.playbackFile?.path?.takeIf { it != item.mediaFile?.path })
+                for (path in paths.distinct()) {
+                    val result = CameraSession.client.deleteFile(path)
+                    if (result.isSuccess) ok++ else failed++
+                }
+            }
+            deleting = false
+            selected = emptySet()
+            val msg = when {
+                failed == 0 -> "Deleted $ok file(s) from camera"
+                ok == 0 -> "Delete failed — is the camera connected?"
+                else -> "Deleted $ok, failed $failed — check connection"
+            }
+            snackbarHostState.showSnackbar(msg)
+            if (ok > 0) refresh()
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) { Snackbar(it) } },
         topBar = {
@@ -211,8 +247,11 @@ fun GalleryScreen(onBack: () -> Unit) {
                 },
                 actions = {
                     if (selectionMode) {
-                        IconButton(enabled = !downloading, onClick = { downloadSelected() }) {
+                        IconButton(enabled = !downloading && !deleting, onClick = { downloadSelected() }) {
                             Icon(Icons.Filled.Download, contentDescription = "Download selected")
+                        }
+                        IconButton(enabled = !downloading && !deleting, onClick = { showDeleteConfirm = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete selected")
                         }
                     } else {
                         IconButton(enabled = !loading, onClick = { refresh() }) {
@@ -253,10 +292,24 @@ fun GalleryScreen(onBack: () -> Unit) {
                     }
                 }
             }
-            if (downloading) {
+            if (downloading || deleting) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp))
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete ${selected.size} item(s)?") },
+            text = { Text("This permanently removes the selected files from the camera's SD card. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { showDeleteConfirm = false; deleteSelected() }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+            },
+        )
     }
 
     val startIndex = viewerKey?.let { key -> items.indexOfFirst { it.key == key } } ?: -1
@@ -299,12 +352,14 @@ private fun GridCell(
             .padding(2.dp)
             .combinedClickable(onClick = onTap, onLongClick = onLongPress),
     ) {
-        AsyncImage(
-            model = item.thumbModel,
-            contentDescription = item.name,
-            imageLoader = imageLoader,
-            modifier = Modifier.fillMaxSize().background(Color.Black),
-        )
+        item.thumbModel?.let { model ->
+            AsyncImage(
+                model = model,
+                contentDescription = item.name,
+                imageLoader = imageLoader,
+                modifier = Modifier.fillMaxSize().background(Color.Black),
+            )
+        } ?: Box(Modifier.fillMaxSize().background(Color(0xFF202020)))
         if (item.isVideo) {
             Icon(
                 Icons.Filled.PlayCircle,
@@ -313,7 +368,7 @@ private fun GridCell(
                 modifier = Modifier.align(Alignment.Center).size(32.dp),
             )
         }
-        if (item.localThumb == null) {
+        if (item.thumbModel != null && item.localThumb == null) {
             // Not synced into local storage yet — thumbnail is loading
             // straight from the camera over the (slow) hotspot.
             Box(
@@ -372,7 +427,7 @@ private fun MediaPagerViewer(
                 VideoPage(item = item, isActive = page == pagerState.currentPage)
             } else {
                 ZoomableImage(
-                    model = item.mediaFile?.url ?: item.thumbModel,
+                    model = item.mediaFile?.url ?: item.thumbModel ?: return@HorizontalPager,
                     imageLoader = imageLoader,
                     contentDescription = item.name,
                 )
@@ -474,7 +529,9 @@ private fun VideoPage(item: GalleryItem, isActive: Boolean) {
 
     val player = remember(item.key) {
         ExoPlayer.Builder(context).build().apply {
-            item.mediaFile?.url?.let { setMediaItem(MediaItem.fromUri(it)) }
+            // Stream the proxy: the original is 545 MB against its 47 MB copy,
+            // and the camera's hotspot cannot keep up with the former.
+            item.playbackFile?.url?.let { setMediaItem(MediaItem.fromUri(it)) }
             prepare()
         }
     }
