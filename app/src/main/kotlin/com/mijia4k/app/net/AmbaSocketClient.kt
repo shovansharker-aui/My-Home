@@ -1,6 +1,8 @@
 package com.mijia4k.app.net
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -13,12 +15,38 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 
 /**
+ * The camera answered, but refused the command. Distinct from an IO failure:
+ * the socket is still healthy, so callers/teardown must not tear it down.
+ */
+class CameraCommandException(
+    val msgId: Int,
+    val rval: Int,
+    val type: String?,
+) : Exception(
+    buildString {
+        append("Camera refused msg_id=$msgId")
+        type?.let { append(" (\"$it\")") }
+        append(": rval=$rval")
+        rvalHint(rval)?.let { append(" — $it") }
+    },
+)
+
+/** Meanings confirmed by probing this firmware directly; others stay generic. */
+private fun rvalHint(rval: Int): String? = when (rval) {
+    -4 -> "invalid/expired session token"
+    -7 -> "unsupported command or value on this firmware"
+    -13 -> "this firmware can't read that setting individually"
+    -14 -> "SD card missing or not ready"
+    else -> null
+}
+
+/**
  * Client for the Ambarella A12 JSON control socket exposed by this camera family
  * (same firmware lineage as SJCAM SJ8 Pro / Thieye T5e) on 192.168.42.1:7878.
  *
  * Protocol: one JSON object per request/response, no framing/newline, single
  * client connection at a time. A session token must be obtained via
- * [startSession] before any other command is accepted.
+ * START_SESSION before any other command is accepted.
  */
 class AmbaSocketClient(
     private val host: String = CameraEndpoints.HOST,
@@ -38,39 +66,50 @@ class AmbaSocketClient(
     val isConnected: Boolean
         get() = socket?.isConnected == true && socket?.isClosed == false
 
-    suspend fun connectAndStartSession(): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            val s = Socket()
-            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-            s.soTimeout = READ_TIMEOUT_MS
-            socket = s
-            writer = s.getOutputStream()
-            reader = BufferedReader(InputStreamReader(s.getInputStream()))
+    suspend fun connectAndStartSession(): Result<Unit> = callLock.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                closeQuietly()
+                val s = Socket()
+                s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                s.soTimeout = READ_TIMEOUT_MS
+                socket = s
+                writer = s.getOutputStream()
+                reader = BufferedReader(InputStreamReader(s.getInputStream()))
 
-            val response = sendRaw(JSONObject().apply {
-                put("msg_id", MsgId.START_SESSION)
-                put("token", 0)
-            })
-            token = response.optInt("param", 0)
-            Unit
-        }.onFailure {
-            // A half-open socket from a failed handshake would otherwise
-            // leave isConnected reporting true (TCP connect succeeded even
-            // though the START_SESSION exchange didn't).
-            closeQuietly()
+                // token 0 is the "I don't have one yet" sentinel for START_SESSION.
+                token = 0
+                val response = exchange(
+                    JSONObject().apply {
+                        put("msg_id", MsgId.START_SESSION)
+                        put("token", 0)
+                    },
+                )
+                token = response.optInt("param", 0)
+                Unit
+            }.onFailure {
+                // A half-open socket from a failed handshake would otherwise
+                // leave isConnected reporting true (TCP connect succeeded even
+                // though the START_SESSION exchange didn't).
+                closeQuietly()
+            }
         }
     }
 
-    suspend fun disconnect() = withContext(Dispatchers.IO) {
-        runCatching {
-            if (isConnected) {
-                sendRaw(JSONObject().apply {
-                    put("msg_id", MsgId.STOP_SESSION)
-                    put("token", token)
-                })
+    suspend fun disconnect() = callLock.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                if (isConnected) {
+                    exchange(
+                        JSONObject().apply {
+                            put("msg_id", MsgId.STOP_SESSION)
+                            put("token", token)
+                        },
+                    )
+                }
             }
+            closeQuietly()
         }
-        closeQuietly()
     }
 
     suspend fun takePhoto(): Result<JSONObject> = command(MsgId.TAKE_PHOTO)
@@ -85,63 +124,87 @@ class AmbaSocketClient(
     suspend fun getBatteryLevel(): Result<Int> =
         command(MsgId.GET_BATTERY_LEVEL).map { it.optInt("param", -1) }
 
-    suspend fun getStorageSpaceBytes(): Result<Long> =
-        command(MsgId.GET_SPACE, type = "total").map { it.optLong("param", -1) }
+    /** Card capacity plus what the camera thinks still fits on it. */
+    data class StorageStatus(
+        val totalBytes: Long?,
+        val freeBytes: Long?,
+        val remainingPhotos: Int?,
+        val remainingVideoSeconds: Int?,
+    )
+
+    /**
+     * The camera answers GET_SPACE in **kilobytes** ("total" came back as
+     * 30566400 for a 29.1 GB card), so values are scaled to bytes here;
+     * reading them as bytes made a full card look like 0.0 GB. The "free"
+     * reply also carries the remaining shot/second estimates, so this takes
+     * two round trips rather than three.
+     */
+    suspend fun getStorageStatus(): StorageStatus {
+        fun Long.kbToBytes(): Long? = takeIf { it > 0 }?.times(1024)
+
+        val total = command(MsgId.GET_SPACE, type = "total").getOrNull()
+            ?.optLong("param", -1)?.kbToBytes()
+        val freeReply = command(MsgId.GET_SPACE, type = "free").getOrNull()
+        return StorageStatus(
+            totalBytes = total,
+            freeBytes = freeReply?.optLong("param", -1)?.kbToBytes(),
+            remainingPhotos = freeReply?.optInt("remain_photo_amount", -1)?.takeIf { it >= 0 },
+            remainingVideoSeconds = freeReply?.optInt("remain_video_time", -1)?.takeIf { it >= 0 },
+        )
+    }
+
+    /**
+     * Changes the camera's own hotspot credentials. The exact shape of this
+     * message isn't confirmed for this firmware — the caller surfaces the
+     * camera's raw reply so a wrong guess is visible rather than silent.
+     */
+    suspend fun setWifi(ssid: String, password: String): Result<JSONObject> =
+        command(MsgId.SET_WIFI) { put("ssid", ssid); put("password", password) }
 
     suspend fun getDeviceInfo(): Result<JSONObject> = command(MsgId.GET_DEVICEINFO)
 
     suspend fun getAllCurrentSettings(): Result<JSONObject> = command(MsgId.GET_ALL_CURRENT_SETTINGS)
 
-    suspend fun getCurrentModeSettings(): Result<JSONObject> = command(MsgId.GET_CURRENT_MODE_SETTINGS)
-
     /** Value(s) the camera currently accepts for one setting — used to build option pickers. */
     suspend fun getSettingOptions(type: String): Result<JSONObject> =
         command(MsgId.GET_SINGLE_SETTING_OPTIONS, type = type)
-
-    suspend fun getSetting(type: String): Result<JSONObject> =
-        command(MsgId.GET_SETTING, type = type)
 
     suspend fun setSetting(type: String, value: String): Result<JSONObject> =
         command(MsgId.SET_SETTING, type = type, param = value)
 
     // Confirmed against the real camera's GET_ALL_CURRENT_SETTINGS dump:
-    // the shooting mode's real key is "mode_setting", not "camera_mode"
-    // (the value taken from SJCAM protocol research was right; the key
-    // name — our own guess — wasn't).
+    // the shooting mode's real key is "mode_setting", not "camera_mode".
     suspend fun setCameraMode(mode: String): Result<JSONObject> = setSetting("mode_setting", mode)
-
-    suspend fun startViewfinder(): Result<JSONObject> =
-        command(MsgId.BOSS_RESETVF, param = "none_force")
-
-    suspend fun stopViewfinder(): Result<JSONObject> = command(MsgId.STOP_VF)
 
     private suspend fun command(
         msgId: Int,
         type: String? = null,
         param: String? = null,
+        extra: (JSONObject.() -> Unit)? = null,
     ): Result<JSONObject> = callLock.withLock {
+        throttle()
         withContext(Dispatchers.IO) {
             runCatching {
                 check(isConnected) { "Not connected to camera control socket" }
-                throttle()
-                sendRaw(JSONObject().apply {
-                    put("msg_id", msgId)
-                    type?.let { put("type", it) }
-                    param?.let { put("param", it) }
-                    put("token", token)
-                })
-            }.onFailure {
-                // A write/read failure (e.g. "Broken pipe" — the camera's
-                // Wi-Fi drifting away mid-session is a real, reproduced
-                // issue) can leave the socket in a "zombie" state where
-                // isConnected still reports true locally even though the
-                // remote end is long gone. Tear it down here so the next
-                // CameraSession.connect() call correctly sees it as
-                // disconnected and re-establishes a fresh session instead
-                // of being fooled into a no-op — this is what lets the app
-                // self-heal within one poll cycle instead of needing a
-                // manual restart.
-                closeQuietly()
+                exchange(
+                    JSONObject().apply {
+                        put("msg_id", msgId)
+                        type?.let { put("type", it) }
+                        param?.let { put("param", it) }
+                        put("token", token)
+                        extra?.invoke(this)
+                    },
+                )
+            }.onFailure { failure ->
+                // A refusal (rval != 0) means the camera is alive and talking —
+                // tearing the socket down for that would turn every rejected
+                // setting into a dropped connection. Only genuine IO failures
+                // ("Broken pipe" when the Wi-Fi drifts away mid-session) leave
+                // the socket in a zombie state where isConnected still reports
+                // true locally, so only those get torn down — which is what
+                // lets the next connect() correctly re-establish instead of
+                // being fooled into a no-op.
+                if (failure !is CameraCommandException) closeQuietly()
             }
         }
     }
@@ -153,36 +216,69 @@ class AmbaSocketClient(
         reader = null
         writer = null
         socket = null
+        token = 0
     }
 
-    private fun throttle() {
+    private suspend fun throttle() {
         val elapsed = System.currentTimeMillis() - lastSendAtMs
         if (elapsed in 0 until MIN_COMMAND_GAP_MS) {
-            Thread.sleep(MIN_COMMAND_GAP_MS - elapsed)
+            delay(MIN_COMMAND_GAP_MS - elapsed)
         }
     }
 
-    /** Sends one JSON object and reads back exactly one JSON object reply. */
-    private fun sendRaw(payload: JSONObject): JSONObject {
+    /**
+     * Sends one request and returns *its* reply, verified.
+     *
+     * The camera pushes unsolicited notifications (msg_id 7) at arbitrary
+     * times — recording started/stopped, capture complete, card state. Reading
+     * "the next JSON object" as the answer means one of those can be mistaken
+     * for a reply, after which every later command reads the *previous*
+     * command's answer and the session is silently off-by-one forever. So
+     * replies are matched on msg_id and anything else is skipped.
+     */
+    private fun exchange(payload: JSONObject): JSONObject {
         val out = writer ?: error("Socket not open")
-        val body = payload.toString().toByteArray(Charsets.UTF_8)
-        out.write(body)
+        val rd = reader ?: error("Socket not open")
+        val expectedMsgId = payload.optInt("msg_id")
+
+        out.write(payload.toString().toByteArray(Charsets.UTF_8))
         out.flush()
         lastSendAtMs = System.currentTimeMillis()
 
-        val rd = reader ?: error("Socket not open")
-        return try {
-            readOneJsonObject(rd)
-        } catch (e: SocketTimeoutException) {
-            throw IllegalStateException("Camera did not reply to msg_id=${payload.optInt("msg_id")}", e)
+        repeat(MAX_SKIPPED_MESSAGES) {
+            val reply = try {
+                readOneJsonObject(rd)
+            } catch (e: SocketTimeoutException) {
+                throw IllegalStateException("Camera did not reply to msg_id=$expectedMsgId", e)
+            }
+
+            val replyMsgId = reply.optInt("msg_id", -1)
+            if (replyMsgId != expectedMsgId) {
+                Log.d(TAG, "Skipping unsolicited msg_id=$replyMsgId while awaiting $expectedMsgId: $reply")
+                return@repeat
+            }
+
+            val rval = reply.optInt("rval", 0)
+            if (rval != 0) {
+                throw CameraCommandException(expectedMsgId, rval, payload.optString("type").ifBlank { null })
+            }
+            return reply
         }
+        error("Camera kept sending unrelated messages instead of a reply to msg_id=$expectedMsgId")
     }
 
-    /** Reads a single balanced-brace JSON object off the stream (no delimiter is sent by the camera). */
+    /**
+     * Reads a single balanced-brace JSON object off the stream (the camera
+     * sends no delimiter). Braces inside string literals are ignored so a
+     * setting value containing one can't unbalance the count.
+     */
     private fun readOneJsonObject(rd: BufferedReader): JSONObject {
         val sb = StringBuilder()
         var depth = 0
         var started = false
+        var inString = false
+        var escaped = false
+
         while (true) {
             val c = rd.read()
             if (c == -1) break
@@ -192,43 +288,48 @@ class AmbaSocketClient(
                 started = true
             }
             sb.append(ch)
-            if (ch == '{') depth++
-            if (ch == '}') {
-                depth--
-                if (depth == 0) break
+
+            when {
+                escaped -> escaped = false
+                ch == '\\' && inString -> escaped = true
+                ch == '"' -> inString = !inString
+                inString -> Unit
+                ch == '{' -> depth++
+                ch == '}' -> {
+                    depth--
+                    if (depth == 0) return JSONObject(sb.toString())
+                }
             }
         }
-        check(sb.isNotEmpty()) { "Empty response from camera" }
-        return JSONObject(sb.toString())
+        error("Camera closed the connection mid-message")
     }
 
     private companion object {
+        const val TAG = "AmbaSocketClient"
         const val CONNECT_TIMEOUT_MS = 4000
         const val READ_TIMEOUT_MS = 5000
         const val MIN_COMMAND_GAP_MS = 600L
+
+        /** Guards against spinning forever if the camera only ever pushes notifications. */
+        const val MAX_SKIPPED_MESSAGES = 8
     }
 }
 
 /** Known msg_id values for the Ambarella A12 control socket. */
 object MsgId {
-    const val GET_SETTING = 1
     const val SET_SETTING = 2
     const val GET_ALL_CURRENT_SETTINGS = 3
     const val GET_SPACE = 5
     const val NOTIFICATION = 7
     const val GET_SINGLE_SETTING_OPTIONS = 9
     const val GET_DEVICEINFO = 11
-    const val CAMERA_OFF = 12
     const val GET_BATTERY_LEVEL = 13
     const val START_SESSION = 257
     const val STOP_SESSION = 258
-    const val BOSS_RESETVF = 259
-    const val STOP_VF = 260
     const val RECORD_START = 513
     const val RECORD_STOP = 514
     const val GET_RECORD_TIME = 515
     const val TAKE_PHOTO = 769
-    const val GET_CURRENT_MODE_SETTINGS = 2053
     const val SET_WIFI = 2055
 }
 

@@ -14,3 +14,7 @@
 
 # Keep the wrapper jar/scripts, ignore only the downloaded distribution cache
 gradle/wrapper/dists/
+
+# Shared debug signing key: a private key, kept out of the repo.
+# CI restores it from the MIJIA_KEYSTORE_B64 secret; locally it just sits here.
+app/debug.keystore

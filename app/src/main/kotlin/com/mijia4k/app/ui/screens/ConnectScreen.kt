@@ -2,25 +2,36 @@ package com.mijia4k.app.ui.screens
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Photo
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,21 +41,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.mijia4k.app.net.CameraEndpoints
 import com.mijia4k.app.net.CameraSession
-import com.mijia4k.app.net.NetworkBinder
+import com.mijia4k.app.ui.theme.MijiaTeal
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private enum class ConnState { UNKNOWN, CHECKING, CONNECTED, FAILED }
+private enum class ConnState { CHECKING, CONNECTED, FAILED }
 
-// The stock Mi Home camera plugin doesn't auto-join the hotspot either — it
-// just tells you the SSID and waits for you to connect manually via
-// Android's own Wi-Fi picker, then polls. Matching that instead of trying
-// to programmatically join Wi-Fi (which turned out unreliable here).
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The app's landing page, styled after the stock Mi Home app's device page:
+ * a hero image, then "Connect to camera" and "Album" rows. Unlike the stock
+ * app (which waits for a tap before dialing the camera), this screen starts
+ * connecting the moment it appears — by the time the user taps "Connect to
+ * camera" the handshake is usually already done, and a slow/failed attempt
+ * shows inline instead of only after a tap.
+ */
 @Composable
 fun ConnectScreen(
     onConnected: () -> Unit,
@@ -53,24 +70,20 @@ fun ConnectScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf(ConnState.UNKNOWN) }
+    var state by remember { mutableStateOf(ConnState.CHECKING) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    fun connect() {
+    fun connect(navigateOnSuccess: Boolean) {
         state = ConnState.CHECKING
         errorMessage = null
         scope.launch {
-            // The camera's hotspot has no internet, so Android will
-            // otherwise route our traffic through mobile data / another
-            // Wi-Fi instead — pin this app's networking to the camera's
-            // Wi-Fi explicitly, and wait for the bind to actually apply
-            // before opening the control socket (opening it immediately
-            // races the async network callback and loses).
-            NetworkBinder.bindToCameraWifi(context)
-            val result = CameraSession.connect()
+            // CameraSession pins this app's traffic to the camera's
+            // no-internet Wi-Fi before dialing — without that, Android routes
+            // us over mobile data and 192.168.42.1 is simply unreachable.
+            val result = CameraSession.connect(context)
             if (result.isSuccess) {
                 state = ConnState.CONNECTED
-                onConnected()
+                if (navigateOnSuccess) onConnected()
             } else {
                 state = ConnState.FAILED
                 errorMessage = result.exceptionOrNull()?.message
@@ -78,14 +91,21 @@ fun ConnectScreen(
         }
     }
 
-    // Auto-connect on open: the camera's own screen sits on "connecting..."
-    // until a client completes the control-socket handshake, and the app
-    // should drop straight into the live-preview screen once that's done
-    // rather than making the user tap through, so do both as soon as this
-    // screen is shown.
-    LaunchedEffect(Unit) { connect() }
+    // Always try to reach the camera whenever this screen is showing — the
+    // user shouldn't have to tap anything for the app to start dialing in,
+    // and coming back from the live screen should re-check rather than sit
+    // on a stale "couldn't connect". A successful auto-connect does NOT jump
+    // straight to the live screen (that would fight someone who came here to
+    // open Album); tapping "Connect to camera" is what navigates in, and by
+    // then the handshake is usually already done.
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (state != ConnState.CONNECTED) connect(navigateOnSuccess = false)
+            delay(5000)
+        }
+    }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Mijia 4K") }) }) { padding ->
+    Scaffold { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -104,47 +124,126 @@ fun ConnectScreen(
                         change.consume()
                         dragAccumulator += dragAmount
                     }
-                }
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                },
         ) {
-            Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier)
             Text(
-                text = "Connect your phone's Wi-Fi to the camera's hotspot " +
-                    "(SSID starts with \"MiCam_\"), then check below. If your phone keeps hopping " +
-                    "back to another network, turn off \"Switch to mobile data automatically\" / " +
-                    "\"Avoid poor connections\" for this Wi-Fi in Android's Wi-Fi settings — the app " +
-                    "pins its own traffic to the camera regardless.",
-                style = MaterialTheme.typography.bodyMedium,
+                "Mi Action Camera 4K",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(top = 24.dp, start = 16.dp, end = 16.dp),
             )
 
-            when (state) {
-                ConnState.UNKNOWN -> Text("Not checked yet")
-                ConnState.CHECKING -> Text("Connecting to ${CameraEndpoints.HOST} ...")
-                ConnState.CONNECTED -> Text("Connected — camera's screen should now show its main screen")
-                ConnState.FAILED -> Text(
-                    "Couldn't connect${errorMessage?.let { ": $it" } ?: ""}. Are you on the MiCam_ hotspot?",
-                )
-            }
+            CameraHero(
+                connected = state == ConnState.CONNECTED,
+                modifier = Modifier.fillMaxWidth().height(260.dp).padding(24.dp),
+            )
 
-            Button(onClick = { connect() }) {
-                Text(if (state == ConnState.CHECKING) "Connecting..." else "Reconnect")
-            }
+            HorizontalDivider()
 
-            TextButton(onClick = {
-                context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-            }) {
-                Text("Open Wi-Fi settings")
-            }
+            ListItem(
+                headlineContent = {
+                    Text(
+                        when (state) {
+                            ConnState.CHECKING -> "Connecting to camera..."
+                            ConnState.CONNECTED -> "Connect to camera"
+                            ConnState.FAILED -> "Couldn't connect — tap to retry"
+                        },
+                    )
+                },
+                supportingContent = if (state == ConnState.FAILED) {
+                    {
+                        Text(
+                            "Are you on the camera's \"MiCam_\" Wi-Fi hotspot?" +
+                                (errorMessage?.let { " ($it)" } ?: ""),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else {
+                    null
+                },
+                leadingContent = {
+                    if (state == ConnState.CHECKING) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Filled.Wifi, contentDescription = null)
+                    }
+                },
+                trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
+                colors = ListItemDefaults.colors(),
+                modifier = Modifier.clickable {
+                    if (state == ConnState.CONNECTED) onConnected() else connect(navigateOnSuccess = true)
+                },
+            )
+            HorizontalDivider()
 
-            OutlinedButton(onClick = onOpenGallery, modifier = Modifier.fillMaxWidth()) {
-                Text("Gallery (swipe left also works)")
-            }
-            OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) {
-                Text("Diagnostics")
+            ListItem(
+                headlineContent = { Text("Album") },
+                leadingContent = { Icon(Icons.Filled.Photo, contentDescription = null) },
+                trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onOpenGallery),
+            )
+            HorizontalDivider()
+
+            Spacer(Modifier.weight(1f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) {
+                    Text("Open Wi-Fi settings")
+                }
+                TextButton(onClick = onOpenDiagnostics) {
+                    Text("Diagnostics")
+                }
             }
         }
+    }
+}
+
+/**
+ * A simple drawn illustration standing in for stock product photography (no
+ * real camera imagery is bundled here) — a rounded camera body with a lens,
+ * on a soft gradient backdrop, tinted by whether the camera is reachable.
+ */
+@Composable
+private fun CameraHero(connected: Boolean, modifier: Modifier = Modifier) {
+    val backdropTop = if (connected) MijiaTeal.copy(alpha = 0.35f) else Color(0xFFB0BEC5)
+    Box(
+        modifier = modifier
+            .background(
+                Brush.verticalGradient(listOf(backdropTop, Color(0xFFECEFF1))),
+                RoundedCornerShape(24.dp),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .background(Color.White, RoundedCornerShape(20.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Videocam,
+                contentDescription = null,
+                tint = if (connected) MijiaTeal else Color(0xFF78909C),
+                modifier = Modifier.size(52.dp),
+            )
+        }
+        // A small "lens ring" accent, echoing the camera's circular lens.
+        Canvas(modifier = Modifier.size(96.dp)) {
+            drawCircle(
+                color = (if (connected) MijiaTeal else Color(0xFF78909C)).copy(alpha = 0.25f),
+                radius = size.minDimension / 2,
+                center = Offset(size.width / 2, size.height / 2),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 40.dp, end = 24.dp)
+                .size(10.dp)
+                .background(if (connected) MijiaTeal else Color(0xFFB0BEC5), CircleShape),
+        )
     }
 }

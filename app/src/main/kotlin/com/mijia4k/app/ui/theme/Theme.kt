@@ -10,20 +10,28 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
+// Matches the stock Mi Home app's accent (its shutter button, selected mode,
+// and selected-option highlight are all this teal) rather than the earlier
+// arbitrary orange.
+val MijiaTeal = androidx.compose.ui.graphics.Color(0xFF00BFA5)
+
 private val DarkColors = darkColorScheme(
-    primary = androidx.compose.ui.graphics.Color(0xFFFF6F00),
+    primary = MijiaTeal,
     secondary = androidx.compose.ui.graphics.Color(0xFFFFC107),
 )
 
 private val LightColors = lightColorScheme(
-    primary = androidx.compose.ui.graphics.Color(0xFFFF6F00),
+    primary = MijiaTeal,
     secondary = androidx.compose.ui.graphics.Color(0xFFFFC107),
 )
 
 @Composable
 fun Mijia4kTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // Off by default: dynamic color pulls from the phone's wallpaper, which
+    // would override the stock app's consistent teal accent with whatever
+    // color the user's wallpaper happens to be.
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {

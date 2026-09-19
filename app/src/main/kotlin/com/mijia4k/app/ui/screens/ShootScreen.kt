@@ -1,8 +1,6 @@
 package com.mijia4k.app.ui.screens
 
-import android.widget.Toast
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -14,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -27,7 +24,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BurstMode
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Photo
@@ -40,13 +36,13 @@ import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timelapse
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -68,6 +64,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
@@ -79,33 +77,41 @@ import com.mijia4k.app.net.CameraImageLoader
 import com.mijia4k.app.net.CameraSession
 import com.mijia4k.app.net.LocalPreviewCache
 import com.mijia4k.app.net.parseSettingsArray
+import com.mijia4k.app.ui.theme.MijiaTeal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private data class ModeOption(val label: String, val value: String, val icon: ImageVector)
-
-// Taken directly from the stock Mi Home app's "Select Mode" screen (user
-// screenshot), same grid order: row 1 Video/Time Lapse Video/Slow Motion,
-// row 2 Loop Record/Video+Photo/Photo, row 3 Timer/Burst/Time Lapse Photo.
-// The *labels* are confirmed real. The *value* strings follow a pattern
-// confirmed from two live data points: "time_lapse_record" matched exactly
-// in the camera's own settings dump, and the camera live-reported
-// "normal_capture" as its current mode (a value we'd never guessed) — so
-// video-family modes use "_record", photo-family modes use "_capture".
-// Video+Photo is genuinely ambiguous (mixed mode); still a guess.
-private val CAMERA_MODES = listOf(
-    ModeOption("Video", "normal_record", Icons.Filled.Videocam),
-    ModeOption("Time Lapse Video", "time_lapse_record", Icons.Filled.Timelapse),
-    ModeOption("Slow Motion", "slow_motion", Icons.Filled.SlowMotionVideo),
-    ModeOption("Loop Record", "loop_record", Icons.Filled.Loop),
-    ModeOption("Video+Photo", "record_capture", Icons.Filled.PhotoCameraFront),
-    ModeOption("Photo", "normal_capture", Icons.Filled.CameraAlt),
-    ModeOption("Timer", "timing_capture", Icons.Filled.Timer),
-    ModeOption("Burst", "continuous_capture", Icons.Filled.BurstMode),
-    ModeOption("Time Lapse Photo", "time_lapse_capture", Icons.Filled.Schedule),
+private data class ModeOption(
+    val label: String,
+    val value: String,
+    val icon: ImageVector,
+    /** Shutter starts/stops a recording rather than taking a single shot. */
+    val isRecording: Boolean,
 )
 
-private val ShutterTeal = Color(0xFF00BFA5)
+// Taken directly from the stock Mi Home app's "Select Mode" screen, same grid
+// order. All nine values are now confirmed against the real camera (each was
+// read back from its own settings dump after switching modes in the stock
+// app), which corrected four earlier guesses: slow_motion, continuous_capture,
+// record_capture and timing_capture.
+private val CAMERA_MODES = listOf(
+    ModeOption("Video", "normal_record", Icons.Filled.Videocam, isRecording = true),
+    ModeOption("Time Lapse Video", "time_lapse_record", Icons.Filled.Timelapse, isRecording = true),
+    ModeOption("Slow Motion", "slow_motion", Icons.Filled.SlowMotionVideo, isRecording = true),
+    ModeOption("Loop Record", "loop_record", Icons.Filled.Loop, isRecording = true),
+    ModeOption("Video+Photo", "record_capture", Icons.Filled.PhotoCameraFront, isRecording = true),
+    ModeOption("Photo", "normal_capture", Icons.Filled.CameraAlt, isRecording = false),
+    ModeOption("Timer", "timing_capture", Icons.Filled.Timer, isRecording = false),
+    ModeOption("Burst", "continuous_capture", Icons.Filled.BurstMode, isRecording = false),
+    // Interval stills: the camera keeps shooting until told to stop, so this
+    // behaves like a recording session rather than a single shutter press.
+    ModeOption("Time Lapse Photo", "time_lapse_capture", Icons.Filled.Schedule, isRecording = true),
+)
+
+private val DEFAULT_MODE = CAMERA_MODES.first { it.value == "time_lapse_record" }
+
+/** Storage/battery are refreshed every Nth settings poll (~30s) rather than every 3s. */
+private const val SLOW_POLL_EVERY = 10
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,36 +125,39 @@ fun ShootScreen(
 
     var connected by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
-    var recordSeconds by remember { mutableStateOf(0) }
+    var busy by remember { mutableStateOf(false) }
+    var recordStartedAt by remember { mutableStateOf(0L) }
+    var elapsedSeconds by remember { mutableStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
-    var currentMode by remember { mutableStateOf(CAMERA_MODES.first { it.value == "time_lapse_record" }) }
-    // What the camera itself last reported for camera_mode, whether or not
-    // it matches one of our guessed CAMERA_MODES values — shown so a wrong
-    // guess is visible instead of silently invisible.
+    var currentMode by remember { mutableStateOf(DEFAULT_MODE) }
+    // What the camera itself last reported for mode_setting, whether or not
+    // it matches one of our values — shown so a wrong guess is visible
+    // instead of silently invisible.
     var cameraReportedMode by remember { mutableStateOf<String?>(null) }
     var showModeDialog by remember { mutableStateOf(false) }
     var liveInfo by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var showGrid by remember { mutableStateOf(false) }
-    var distortionCorrection by remember { mutableStateOf(true) }
+    var distortionCorrection by remember { mutableStateOf<Boolean?>(null) }
+    var remainingVideoSeconds by remember { mutableStateOf<Int?>(null) }
+    var batteryPercent by remember { mutableStateOf<Int?>(null) }
     var lastThumb by remember { mutableStateOf<Any?>(null) }
 
     LaunchedEffect(Unit) {
-        lastThumb = LocalPreviewCache(context).listCached().maxByOrNull { it.lastModified() }
+        lastThumb = LocalPreviewCache(context).listCached().firstOrNull()
     }
 
-    // Sync the small preview files for everything currently on the camera
-    // into the app's own storage as soon as we're connected, so Gallery is
-    // instantly browsable (and mostly offline-capable) instead of having to
-    // fetch over the camera's slow hotspot every time it's opened.
+    // Sync the poster files for everything currently on the camera into the
+    // app's own storage as soon as we're connected, so Album is instantly
+    // browsable (and mostly offline-capable) instead of fetching over the
+    // camera's slow hotspot every time it's opened.
     LaunchedEffect(connected) {
         if (connected) {
-            val httpClient = CameraHttpClient()
             val cache = LocalPreviewCache(context)
             runCatching {
-                val groups = httpClient.listAllMedia()
-                cache.sync(httpClient, groups)
+                val httpClient = CameraHttpClient()
+                cache.sync(httpClient, httpClient.listAllMedia())
             }
-            lastThumb = LocalPreviewCache(context).listCached().maxByOrNull { it.lastModified() }
+            lastThumb = cache.listCached().firstOrNull()
         }
     }
 
@@ -156,51 +165,73 @@ fun ShootScreen(
     // screen is open so the info row stays live and the highlighted mode
     // reflects what the camera actually reports rather than what was last
     // tapped. Runs continuously (not gated on `connected`) so a dropped
-    // connection — confirmed reproducible: the phone's Wi-Fi drifting away
-    // from the camera's hotspot mid-session — self-heals within one cycle
-    // instead of needing the user to back out and reconnect manually.
-    // AmbaSocketClient now tears down a dead socket on any failed command,
-    // so CameraSession.connect() below correctly detects it needs to
-    // re-establish rather than being fooled into a no-op.
+    // connection self-heals within one cycle — CameraSession.connect() also
+    // re-pins the process to the camera's Wi-Fi, which is what actually
+    // breaks when the phone drifts back to mobile data.
     LaunchedEffect(Unit) {
+        var tick = 0
         while (true) {
-            connected = CameraSession.connect().isSuccess
-            if (connected) {
+            connected = CameraSession.connect(context).isSuccess
+            if (!connected) {
+                // Never leave a stop button on screen for a recording that
+                // can't be stopped; the camera's state is unknown from here.
+                recording = false
+            } else {
                 CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
                     val map = parseSettingsArray(json)
-                    // Confirmed real key (from the camera's own settings
-                    // dump): "mode_setting", not the "camera_mode" this
-                    // used to read.
                     map["mode_setting"]?.let { raw ->
                         cameraReportedMode = raw
                         CAMERA_MODES.firstOrNull { it.value == raw }?.let { matched ->
+                            if (matched != currentMode) recording = false
                             currentMode = matched
                             CameraSession.currentModeValue = matched.value
                         }
                     }
+                    // Reflect the camera's actual state rather than assuming
+                    // it starts enabled — the icon used to be able to lie.
+                    map["distortion_correction"]?.let { distortionCorrection = it.equals("on", true) }
                     liveInfo = liveInfoFor(currentMode.value, map)
                 }
+                // Card space and battery move slowly, and every command is
+                // serialized behind a 600ms inter-command gap — polling them
+                // each cycle would park the shutter behind four round trips.
+                if (tick % SLOW_POLL_EVERY == 0) {
+                    remainingVideoSeconds = CameraSession.client.getStorageStatus().remainingVideoSeconds
+                    // Not every firmware answers this one; it stays hidden
+                    // rather than showing a bogus level if the camera refuses.
+                    batteryPercent = CameraSession.client.getBatteryLevel().getOrNull()?.takeIf { it in 0..100 }
+                }
             }
+            tick++
             delay(if (connected) 3000 else 2000)
         }
     }
 
-    // Recording duration, straight from the camera (GET_RECORD_TIME) —
-    // only meaningful while actually recording.
+    // GET_RECORD_TIME isn't implemented on this firmware (it answers with a
+    // refusal), so the elapsed counter is kept locally from the moment the
+    // camera accepted the start command.
     LaunchedEffect(recording) {
         while (recording) {
-            CameraSession.client.getRecordTimeSeconds().getOrNull()?.let { recordSeconds = it }
-            delay(1000)
+            elapsedSeconds = ((System.currentTimeMillis() - recordStartedAt) / 1000).toInt().coerceAtLeast(0)
+            delay(500)
         }
-        if (!recording) recordSeconds = 0
+        elapsedSeconds = 0
+    }
+
+    // Clear transient status text so a stale "sent — confirming..." doesn't
+    // sit on screen forever.
+    LaunchedEffect(status) {
+        if (status != null) {
+            delay(4000)
+            status = null
+        }
     }
 
     val player = remember {
         // Default ExoPlayer buffering targets several seconds of video before
         // playback, which is fine for progressive/HLS but makes a live feed
         // feel badly delayed. Cut the buffer way down — this is a live
-        // control feed, not something that needs to survive network hiccups
-        // smoothly, so a stutter now and then is a fair trade for latency.
+        // control feed, so an occasional stutter is a fair trade for latency.
         val lowLatencyLoadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(300, 600, 100, 150)
             .build()
@@ -208,20 +239,44 @@ fun ShootScreen(
             .setMediaSourceFactory(RtspMediaSource.Factory())
             .setLoadControl(lowLatencyLoadControl)
             .build()
-            .apply {
-                setMediaItem(MediaItem.fromUri(CameraEndpoints.RTSP_URL))
-                prepare()
-                playWhenReady = true
-            }
     }
+    var previewFailed by remember { mutableStateOf(false) }
+
     DisposableEffect(Unit) {
-        onDispose { player.release() }
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                previewFailed = true
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
     }
 
-    fun runCommand(label: String, block: suspend () -> Result<*>) {
+    // The live feed only exists once the control session is up, and a failed
+    // prepare() is permanent — the preview used to race the handshake on
+    // launch and then stay black forever with no way to retry.
+    LaunchedEffect(connected, previewFailed) {
+        if (connected && !previewFailed) {
+            player.setMediaItem(MediaItem.fromUri(CameraEndpoints.RTSP_URL))
+            player.prepare()
+            player.playWhenReady = true
+        }
+    }
+
+    /** Runs a camera command, reporting what the *camera* said rather than just that bytes were sent. */
+    fun runCommand(label: String, onSuccess: () -> Unit = {}, block: suspend () -> Result<*>) {
+        if (busy) return
+        busy = true
         scope.launch {
             val result = block()
-            status = if (result.isSuccess) "$label OK" else "$label failed: ${result.exceptionOrNull()?.message}"
+            status = result.fold(
+                onSuccess = { onSuccess(); "$label OK" },
+                onFailure = { "$label failed: ${it.message}" },
+            )
+            busy = false
         }
     }
 
@@ -235,6 +290,9 @@ fun ShootScreen(
                     }
                 },
                 actions = {
+                    batteryPercent?.let {
+                        Text("$it%", style = MaterialTheme.typography.bodySmall)
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
@@ -247,7 +305,7 @@ fun ShootScreen(
                 .fillMaxSize()
                 .padding(padding)
                 // Swipe right-to-left anywhere on this screen to jump into
-                // the full Gallery, like flicking to the next screen.
+                // the full Album, like flicking to the next screen.
                 .pointerInput(Unit) {
                     var dragAccumulator = 0f
                     detectHorizontalDragGestures(
@@ -264,25 +322,23 @@ fun ShootScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                // Backed by a real toggle sent to the camera — the stock app
-                // shows a toast confirming this when it's on.
-                IconButton(onClick = {
-                    distortionCorrection = !distortionCorrection
-                    runCommand("Distortion correction") {
-                        CameraSession.client.setSetting("distortion_correction", if (distortionCorrection) "on" else "off")
-                    }
-                }) {
+                IconButton(
+                    enabled = connected && distortionCorrection != null,
+                    onClick = {
+                        val next = !(distortionCorrection ?: false)
+                        runCommand(
+                            "Distortion correction",
+                            onSuccess = { distortionCorrection = next },
+                        ) {
+                            CameraSession.client.setSetting("distortion_correction", if (next) "on" else "off")
+                        }
+                    },
+                ) {
                     Icon(
                         Icons.Filled.Straighten,
                         contentDescription = "Distortion correction",
-                        tint = if (distortionCorrection) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        tint = if (distortionCorrection == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                     )
-                }
-                // Present in the stock app's top row; its exact backing
-                // function isn't confirmed, so this is a visual toggle only
-                // for now rather than guessing at a camera command.
-                IconButton(onClick = { }) {
-                    Icon(Icons.Filled.GpsFixed, contentDescription = "Focus/exposure")
                 }
                 IconButton(onClick = { showGrid = !showGrid }) {
                     Icon(
@@ -293,7 +349,7 @@ fun ShootScreen(
                 }
             }
 
-            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -301,20 +357,33 @@ fun ShootScreen(
                             this.player = player
                             // Live control feed with its own shutter/record
                             // buttons below — ExoPlayer's default tap-to-show
-                            // overlay (seek bar/position, meaningless for a
-                            // live RTSP stream) was just confusing here.
+                            // seek bar is meaningless for a live stream.
                             useController = false
                         }
                     },
                 )
                 if (showGrid) GridOverlay(Modifier.fillMaxSize())
-                if (isVideoLikeMode(currentMode.value) && recording) {
-                    Row(
-                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+
+                if (previewFailed) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text(formatDuration(recordSeconds), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        Text("Live preview stopped", color = Color.White)
+                        TextButton(onClick = { previewFailed = false }) { Text("Retry") }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    remainingVideoSeconds?.takeIf { !recording }?.let {
+                        Text(formatDuration(it), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (recording) {
+                        Text(formatDuration(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleMedium)
                         Box(Modifier.size(8.dp).background(Color.Red, CircleShape))
                     }
                 }
@@ -331,10 +400,6 @@ fun ShootScreen(
                         .padding(4.dp)
                         .pointerInput(Unit) { detectTapGestures(onTap = { showModeDialog = true }) },
                 )
-                // The camera's own camera_mode value doesn't match any of
-                // our guessed CAMERA_MODES strings — surfaced so the real
-                // value is visible instead of silently falling back to
-                // whatever was last confirmed.
                 if (cameraReportedMode != null && CAMERA_MODES.none { it.value == cameraReportedMode }) {
                     Text(
                         " (camera reports: \"$cameraReportedMode\")",
@@ -357,7 +422,7 @@ fun ShootScreen(
 
             if (!connected) {
                 Text(
-                    "Not connected to the camera's control socket — shutter/record won't work.",
+                    "Not connected to the camera — reconnecting...",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(8.dp),
                 )
@@ -371,8 +436,6 @@ fun ShootScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Gallery shortcut — shows the last synced preview like the
-                // stock app's thumbnail button when one's available.
                 IconButton(
                     onClick = onOpenGallery,
                     modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
@@ -380,31 +443,41 @@ fun ShootScreen(
                     lastThumb?.let {
                         AsyncImage(
                             model = it,
-                            contentDescription = "Gallery",
+                            contentDescription = "Album",
                             imageLoader = CameraImageLoader.get(context),
                             modifier = Modifier.fillMaxSize(),
                         )
-                    } ?: Icon(Icons.Filled.Photo, contentDescription = "Gallery")
+                    } ?: Icon(Icons.Filled.Photo, contentDescription = "Album")
                 }
 
                 IconButton(
-                    enabled = connected,
+                    enabled = connected && !busy,
                     onClick = {
-                        if (isVideoLikeMode(currentMode.value)) {
+                        // The recording flag only moves once the camera has
+                        // actually accepted the command — flipping it
+                        // optimistically left a red stop button (and a
+                        // running timer) over a camera that never started.
+                        if (currentMode.isRecording) {
                             if (recording) {
-                                runCommand("Stop recording") { CameraSession.client.stopRecording() }
+                                runCommand("Stop recording", onSuccess = { recording = false }) {
+                                    CameraSession.client.stopRecording()
+                                }
                             } else {
-                                runCommand("Start recording") { CameraSession.client.startRecording() }
+                                runCommand(
+                                    "Start recording",
+                                    onSuccess = {
+                                        recordStartedAt = System.currentTimeMillis()
+                                        recording = true
+                                    },
+                                ) { CameraSession.client.startRecording() }
                             }
-                            recording = !recording
                         } else {
                             runCommand("Shutter") { CameraSession.client.takePhoto() }
-                            Toast.makeText(context, "Shutter triggered", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier
                         .size(72.dp)
-                        .background(if (recording) Color.Red else ShutterTeal, CircleShape),
+                        .background(if (recording) Color.Red else MijiaTeal, CircleShape),
                 ) {
                     if (recording) {
                         Icon(Icons.Filled.Stop, contentDescription = "Stop", tint = Color.White, modifier = Modifier.size(28.dp))
@@ -438,16 +511,11 @@ fun ShootScreen(
                                         showModeDialog = false
                                         // Don't flip the highlighted mode
                                         // optimistically — send the command,
-                                        // then let the settings-poll loop
-                                        // above confirm (or not) what the
-                                        // camera actually switched to.
-                                        scope.launch {
-                                            val result = CameraSession.client.setCameraMode(mode.value)
-                                            status = if (result.isSuccess) {
-                                                "Set mode ${mode.label} sent — confirming with camera..."
-                                            } else {
-                                                "Set mode ${mode.label} failed: ${result.exceptionOrNull()?.message}"
-                                            }
+                                        // then let the poll loop confirm what
+                                        // the camera actually switched to.
+                                        // Some modes take 30s+ to apply.
+                                        runCommand("Set mode ${mode.label}") {
+                                            CameraSession.client.setCameraMode(mode.value)
                                         }
                                     })
                                 },
@@ -457,7 +525,7 @@ fun ShootScreen(
                                 Modifier
                                     .size(56.dp)
                                     .background(
-                                        if (mode == currentMode) ShutterTeal else Color(0xFF3A3A3A),
+                                        if (mode == currentMode) MijiaTeal else Color(0xFF3A3A3A),
                                         CircleShape,
                                     ),
                                 contentAlignment = Alignment.Center,
@@ -489,9 +557,6 @@ private fun GridOverlay(modifier: Modifier = Modifier) {
     }
 }
 
-private fun isVideoLikeMode(mode: String): Boolean =
-    mode.contains("record") || mode.contains("video") || mode.contains("loop") || mode.contains("slow")
-
 private fun formatDuration(totalSeconds: Int): String {
     val m = totalSeconds / 60
     val s = totalSeconds % 60
@@ -499,8 +564,7 @@ private fun formatDuration(totalSeconds: Int): String {
 }
 
 // Key -> display label, using the real field keys confirmed from the
-// camera's own GET_ALL_CURRENT_SETTINGS dump. 2-3 of each mode's real
-// fields, picked as the ones most useful to glance at live.
+// camera's own GET_ALL_CURRENT_SETTINGS dump.
 private val LIVE_INFO_LABELS = mapOf(
     "video_resolution" to "Resolution",
     "video_quality" to "Quality",

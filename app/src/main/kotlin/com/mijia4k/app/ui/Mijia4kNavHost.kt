@@ -23,14 +23,11 @@ fun Mijia4kNavHost(navController: NavHostController) {
     NavHost(navController = navController, startDestination = Routes.CONNECT) {
         composable(Routes.CONNECT) {
             ConnectScreen(
-                // Once the control-socket handshake succeeds, the app is the
-                // camera's screen now — drop straight into live preview
-                // instead of leaving the user on a "connected" splash.
-                onConnected = {
-                    navController.navigate(Routes.SHOOT) {
-                        popUpTo(Routes.CONNECT) { inclusive = true }
-                    }
-                },
+                // Home stays on the back stack: it's the hub that also holds
+                // Album, and popping it left the live screen's back arrow
+                // with nothing to pop — the home page became unreachable
+                // without killing the app.
+                onConnected = { navController.navigate(Routes.SHOOT) },
                 onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
                 onOpenGallery = { navController.navigate(Routes.GALLERY) },
             )

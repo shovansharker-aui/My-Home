@@ -28,6 +28,23 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # Signs every CI build with the same key as local builds, so a
+      # downloaded APK installs straight over whatever is already on the
+      # phone. Optional: without the secret the build still runs, it just
+      # falls back to the runner's throwaway debug key.
+      # Set it up once with:
+      #   base64 -w0 app/debug.keystore | gh secret set MIJIA_KEYSTORE_B64
+      - name: Restore shared debug keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.MIJIA_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > app/debug.keystore
+            echo "Signing with the shared debug key."
+          else
+            echo "MIJIA_KEYSTORE_B64 not set — using the runner's default debug key."
+          fi
+
       - name: Assemble debug and release APKs
         run: ./gradlew assembleDebug assembleRelease --stacktrace
 

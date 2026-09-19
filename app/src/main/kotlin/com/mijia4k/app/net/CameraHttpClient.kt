@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.OutputStream
+import java.util.concurrent.TimeUnit
 
 /**
  * Talks to the camera's port-80 web server, which turns out to be plain
@@ -20,7 +21,7 @@ import java.io.OutputStream
  */
 class CameraHttpClient(
     private val host: String = CameraEndpoints.HOST,
-    private val httpClient: OkHttpClient = OkHttpClient.Builder().build(),
+    private val httpClient: OkHttpClient = shared,
 ) {
     data class CameraFile(
         val name: String,
@@ -30,9 +31,15 @@ class CameraHttpClient(
         val sizeBytes: Long?,
     ) {
         val url: String get() = "http://${CameraEndpoints.HOST}$path"
-        private val extension get() = name.substringAfterLast('.', "").lowercase()
+        val extension: String get() = name.substringAfterLast('.', "").lowercase()
         val isVideo: Boolean get() = extension in VIDEO_EXTENSIONS
         val isImage: Boolean get() = extension in IMAGE_EXTENSIONS
+
+        /** Decodable by the image loader — a RAW `.DNG` is an image but not this. */
+        val isDisplayableImage: Boolean get() = extension in DISPLAYABLE_IMAGE_EXTENSIONS
+
+        /** A camera-generated poster frame — never viewable content in its own right. */
+        val isThumbnail: Boolean get() = extension in THUMBNAIL_EXTENSIONS
     }
 
     // Matches one listing row: the link (name/href) and, for files, the
@@ -53,31 +60,44 @@ class CameraHttpClient(
             if (href.startsWith("?") || href == "../" || href == "./") return@mapNotNull null
             val isDir = href.endsWith("/")
             val name = m.groupValues[2].ifBlank { href.trimEnd('/') }
-            val sizeText = m.groupValues[3].trim()
-            val unit = m.groupValues[4].trim()
             CameraFile(
                 name = name,
                 path = normalized + href,
                 isDirectory = isDir,
-                sizeBytes = if (isDir) null else parseSize(sizeText, unit),
+                sizeBytes = if (isDir) null else parseSize(m.groupValues[3].trim(), m.groupValues[4].trim()),
             )
         }.toList()
     }
 
     /**
-     * Each shot on this camera writes two files sharing a basename (e.g. a
-     * full-resolution original plus a much smaller companion — a `.THM`
-     * alongside an `.MP4`, or similar for photos). This groups a folder
-     * listing's flat files by basename and picks the smaller of each pair
-     * as the "preview" — the one Gallery should display/play by default —
-     * keeping the larger one addressable as the original for downloads.
-     * When a file has no pair, it serves as both.
+     * One shot on the camera can write several files sharing a basename: an
+     * `.MP4` next to a tiny `.THM` poster, or a `.JPG` next to its `.DNG`
+     * raw. They're grouped here so Gallery shows one tile per shot.
+     *
+     * [mediaFile] is deliberately chosen by *kind*, not by size. Picking "the
+     * smallest file in the group" looked reasonable but made the `.THM` the
+     * thing Gallery displayed and tried to play for every video — no play
+     * badge, a still image in the viewer, and a `.THM` filename on screen —
+     * and because it fell back to directory order whenever the listing's size
+     * column didn't parse, it broke only sometimes, which is worse.
      */
     data class MediaGroup(
         val baseName: String,
-        val previewFile: CameraFile,
-        val originalFile: CameraFile?,
-    )
+        /** The real photo or video: what the viewer shows and plays. */
+        val mediaFile: CameraFile,
+        /** Small companion poster, when the camera made one. */
+        val thumbFile: CameraFile?,
+        /** Full-resolution sibling worth downloading too (e.g. a RAW `.DNG`). */
+        val rawFile: CameraFile?,
+    ) {
+        val isVideo: Boolean get() = mediaFile.isVideo
+
+        /** Cheapest thing to load for a grid cell — the poster if there is one. */
+        val thumbSource: CameraFile get() = thumbFile ?: mediaFile
+
+        /** Everything worth saving when the user downloads this shot. */
+        val downloadable: List<CameraFile> get() = listOfNotNull(mediaFile, rawFile)
+    }
 
     /** Recursively lists every file under [root] (default DCIM) and pairs them into [MediaGroup]s. */
     suspend fun listAllMedia(root: String = DCIM_ROOT, maxDepth: Int = 3): List<MediaGroup> =
@@ -94,25 +114,32 @@ class CameraHttpClient(
 
             files.groupBy { it.path.substringBeforeLast('.') }
                 .mapNotNull { (baseName, group) ->
+                    val thumb = group.firstOrNull { it.isThumbnail }
+                    val playable = group.filter { !it.isThumbnail }
                     // A lone .THM with no matching video/photo (an orphaned
-                    // thumbnail — this 8-year-old SD card has plenty of old
-                    // content left over from before this project) has no
-                    // viewable content of its own; showing it as its own
-                    // grid entry is just a confusing black tile.
-                    if (group.all { it.name.substringAfterLast('.', "").lowercase() == "thm" }) return@mapNotNull null
-                    val bySize = group.sortedBy { it.sizeBytes ?: Long.MAX_VALUE }
-                    MediaGroup(baseName, previewFile = bySize.first(), originalFile = bySize.getOrNull(1))
+                    // poster — this 8-year-old card has plenty left over) has
+                    // nothing to show; it would just be a black tile.
+                    // Prefer the JPG over its RAW sibling: both are "images",
+                    // but only one of them the image loader can decode.
+                    val media = playable.firstOrNull { it.isVideo }
+                        ?: playable.firstOrNull { it.isDisplayableImage }
+                        ?: playable.firstOrNull { it.isImage }
+                        ?: return@mapNotNull null
+                    MediaGroup(
+                        baseName = baseName,
+                        mediaFile = media,
+                        thumbFile = thumb,
+                        rawFile = playable.firstOrNull { it != media },
+                    )
                 }
-                .sortedBy { it.baseName }
+                .sortedByDescending { it.baseName }
         }
 
     suspend fun downloadTo(file: CameraFile, out: OutputStream): Long = withContext(Dispatchers.IO) {
         httpClient.newCall(Request.Builder().url(file.url).build()).execute().use { resp ->
             check(resp.isSuccessful) { "Download failed: HTTP ${resp.code}" }
             val body = resp.body ?: error("Empty response body")
-            body.byteStream().use { input ->
-                input.copyTo(out)
-            }
+            body.byteStream().use { input -> input.copyTo(out) }
         }
     }
 
@@ -130,6 +157,21 @@ class CameraHttpClient(
     companion object {
         const val DCIM_ROOT = "/DCIM/"
         val VIDEO_EXTENSIONS = setOf("mp4", "mov", "avi", "ts")
-        val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif")
+        val DISPLAYABLE_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif")
+        val IMAGE_EXTENSIONS = DISPLAYABLE_IMAGE_EXTENSIONS + setOf("dng", "raw")
+        val THUMBNAIL_EXTENSIONS = setOf("thm")
+
+        // One client for the whole app: each OkHttpClient carries its own
+        // connection pool and dispatcher threads, and a fresh one was being
+        // built for every gallery sync. Timeouts are generous because the
+        // camera's hotspot is slow, but finite so a stalled read can't hang
+        // the sync forever.
+        private val shared: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build()
+        }
     }
 }

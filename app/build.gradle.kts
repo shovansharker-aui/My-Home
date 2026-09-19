@@ -11,16 +11,36 @@ android {
         applicationId = "com.mijia4k.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.17.0"
+        versionCode = 18
+        versionName = "0.18.0"
+    }
+
+    // AGP's default ~/.android/debug.keystore is unique per machine, so a
+    // CI-built APK and a locally-built one are signed differently and won't
+    // install over each other ("package conflicts with an existing package").
+    // A shared key fixes that — but it's a private key, so it is NOT in the
+    // repo: keep it at app/debug.keystore locally, and in CI restore it from
+    // the MIJIA_KEYSTORE_B64 secret (see .github/workflows/build.yml).
+    //
+    // When it's absent the build still works, falling back to AGP's default
+    // key — otherwise a fresh clone (or CI without the secret set) couldn't
+    // build at all.
+    val sharedDebugKey = file("debug.keystore")
+    if (sharedDebugKey.exists()) {
+        signingConfigs {
+            getByName("debug") {
+                storeFile = sharedDebugKey
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Personal tool, not Play-published: sign release builds with the
-            // auto-generated debug key so the CI-built APK installs directly.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
