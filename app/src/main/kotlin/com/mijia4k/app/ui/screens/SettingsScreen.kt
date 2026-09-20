@@ -49,6 +49,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.AmbaSocketClient
 import com.mijia4k.app.net.CameraSession
+import com.mijia4k.app.net.GENERAL_FIELDS
+import com.mijia4k.app.net.MODE_LABELS
+import com.mijia4k.app.net.SettingField
+import com.mijia4k.app.net.SettingOptions
+import com.mijia4k.app.net.displayValue
+import com.mijia4k.app.net.fieldsFor
+import com.mijia4k.app.net.isToggleOn
+import com.mijia4k.app.net.toggleValue
 import com.mijia4k.app.net.parseSettingsArray
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -56,217 +64,6 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-private data class SettingField(val label: String, val key: String, val isToggle: Boolean = false)
-
-// Field labels/order below are transcribed from real screen recordings of
-// the stock app. The *keys* are now confirmed too — read directly off the
-// real camera's GET_ALL_CURRENT_SETTINGS dump (msg_id 3, which works
-// perfectly), not guessed. That dump also revealed that the per-field
-// GET_SETTING/GET_SINGLE_SETTING_OPTIONS commands (msg_id 1/9, both of which
-// take a "type" argument) fail with the *same* error code regardless of
-// which key is passed — so this screen reads every value from one
-// GET_ALL_CURRENT_SETTINGS call instead of querying fields individually.
-
-private val VIDEO_FIELDS = listOf(
-    SettingField("Color", "video_color"),
-    SettingField("Resolution", "video_resolution"),
-    SettingField("Quality", "video_quality"),
-    SettingField("Mic Mute", "video_mute", isToggle = true),
-    SettingField("Stamp", "video_stamp"),
-    SettingField("Auto Record", "video_record_startup", isToggle = true),
-    SettingField("Metering Mode", "video_metering_mode"),
-    SettingField("EV", "video_ev_bias"),
-    SettingField("WB", "video_white_balance"),
-    SettingField("ISO", "video_iso"),
-)
-private val TIME_LAPSE_VIDEO_FIELDS = listOf(
-    SettingField("Interval", "video_time_lapse"),
-    SettingField("Video Length", "video_time_lapse_length"),
-    SettingField("Color", "video_color"),
-    SettingField("Resolution", "video_resolution"),
-    SettingField("Quality", "video_quality"),
-    SettingField("Stamp", "video_stamp"),
-    SettingField("Auto Record", "video_record_startup", isToggle = true),
-    SettingField("Metering Mode", "video_metering_mode"),
-    SettingField("EV", "video_ev_bias"),
-    SettingField("WB", "video_white_balance"),
-)
-private val SLOW_MOTION_FIELDS = listOf(
-    SettingField("Speed", "video_rate"),
-    SettingField("Color", "video_color"),
-    SettingField("Quality", "video_quality"),
-    SettingField("Auto Record", "video_record_startup", isToggle = true),
-    SettingField("Metering Mode", "video_metering_mode"),
-    SettingField("EV", "video_ev_bias"),
-    SettingField("WB", "video_white_balance"),
-)
-private val LOOP_RECORD_FIELDS = listOf(
-    SettingField("Video Length", "video_loop_length"),
-    SettingField("Color", "video_color"),
-    SettingField("Resolution", "video_resolution"),
-    SettingField("Quality", "video_quality"),
-    SettingField("Mic Mute", "video_mute", isToggle = true),
-    SettingField("Stamp", "video_stamp"),
-    SettingField("Auto Record", "video_record_startup", isToggle = true),
-    SettingField("Metering Mode", "video_metering_mode"),
-    SettingField("EV", "video_ev_bias"),
-    SettingField("WB", "video_white_balance"),
-)
-private val VIDEO_PHOTO_FIELDS = listOf(
-    SettingField("Interval", "video_piv_time_lapse"),
-    SettingField("Color", "video_color"),
-    SettingField("Resolution", "video_resolution"),
-    SettingField("Quality", "video_quality"),
-    SettingField("Mic Mute", "video_mute", isToggle = true),
-    SettingField("Stamp", "video_stamp"),
-    SettingField("Auto Record", "video_record_startup", isToggle = true),
-    SettingField("Metering Mode", "video_metering_mode"),
-    SettingField("EV", "video_ev_bias"),
-    SettingField("WB", "video_white_balance"),
-)
-private val PHOTO_FIELDS = listOf(
-    SettingField("Aspect Ratio", "photo_size"),
-    SettingField("Stamp", "photo_stamp"),
-    SettingField("Metering Mode", "photo_metering_mode"),
-    SettingField("EV", "photo_ev_bias"),
-    SettingField("Shutter", "photo_shutter"),
-    SettingField("ISO", "photo_iso"),
-    SettingField("RAW", "photo_raw", isToggle = true),
-    SettingField("WB", "photo_wb"),
-    // Unconfirmed: the real camera dump doesn't show an obvious
-    // "photo_color" key — "photo_digital_effect" is the closest candidate
-    // but its "off" value doesn't look like a color-profile name, so this
-    // one may still be wrong.
-    SettingField("Color", "photo_digital_effect"),
-)
-private val TIMER_FIELDS = listOf(
-    SettingField("Countdown", "photo_selftimer"),
-    SettingField("Aspect Ratio", "photo_size"),
-    SettingField("Stamp", "photo_stamp"),
-    SettingField("Metering Mode", "photo_metering_mode"),
-    SettingField("EV", "photo_ev_bias"),
-    SettingField("ISO", "photo_iso"),
-    SettingField("WB", "photo_wb"),
-)
-private val BURST_FIELDS = listOf(
-    SettingField("Rate", "photo_burst_frequence"),
-    SettingField("Aspect Ratio", "photo_size"),
-    SettingField("Stamp", "photo_stamp"),
-    SettingField("Metering Mode", "photo_metering_mode"),
-    SettingField("EV", "photo_ev_bias"),
-    SettingField("ISO", "photo_iso"),
-    SettingField("WB", "photo_wb"),
-)
-private val TIME_LAPSE_PHOTO_FIELDS = listOf(
-    SettingField("Interval", "photo_time_lapse"),
-    SettingField("Aspect Ratio", "photo_size"),
-    SettingField("Stamp", "photo_stamp"),
-    SettingField("Metering Mode", "photo_metering_mode"),
-    SettingField("EV", "photo_ev_bias"),
-    SettingField("ISO", "photo_iso"),
-    SettingField("WB", "photo_wb"),
-)
-
-// "Camera Parameter" rows, in the stock app's exact order. Rotate reads back
-// as "up"/"down" rather than on/off, so it needs its own on/off value pair.
-private val ROTATE_FIELD = SettingField("Rotate", "auto_rotate", isToggle = true)
-private val GENERAL_FIELDS = listOf(
-    SettingField("Video Standard", "system_type"),
-    SettingField("Beep Volume", "prompt_volume"),
-    SettingField("Default Mode", "default_boot_mode"),
-    ROTATE_FIELD,
-    SettingField("Auto Screen Lock", "auto_lock_screen"),
-    SettingField("Auto Power Off", "auto_power_off"),
-    SettingField("Wi-Fi Auto On", "wifi_auto_start", isToggle = true),
-)
-
-// Values confirmed live against the real camera. Must match CAMERA_MODES in
-// ShootScreen.kt.
-private val MODE_LABELS = mapOf(
-    "normal_record" to "Video",
-    "time_lapse_record" to "Time Lapse Video",
-    "slow_motion" to "Slow Motion",
-    "loop_record" to "Loop Record",
-    "record_capture" to "Video+Photo",
-    "normal_capture" to "Photo",
-    "timing_capture" to "Timer",
-    "continuous_capture" to "Burst",
-    "time_lapse_capture" to "Time Lapse Photo",
-)
-
-private val EV_OPTIONS = listOf(
-    "+2.0EV", "+1.7EV", "+1.3EV", "+1.0EV", "+0.7EV", "+0.3EV", "0",
-    "-0.3EV", "-0.7EV", "-1.0EV", "-1.3EV", "-1.7EV", "-2.0EV",
-)
-
-/** A picker entry: what the stock app shows, and what the camera actually stores. */
-private data class Choice(val label: String, val value: String)
-
-private fun choices(vararg pairs: Pair<String, String>) = pairs.map { Choice(it.first, it.second) }
-
-// Option lists transcribed from the stock app's own pickers, so these are the
-// real choices the camera offers rather than guesses. Labels are what the
-// stock app displays; values are what the camera reports back in its settings
-// dump, which is lowercase and abbreviated ("mute", "off", "5min") and does
-// *not* match the displayed label — writing the label verbatim would be
-// rejected. "Other..." still escapes to manual entry if a value is wrong.
-private val OPTION_CHOICES: Map<String, List<Choice>> = mapOf(
-    "system_type" to choices("NTSC" to "NTSC", "PAL" to "PAL"),
-    "prompt_volume" to choices("High" to "high", "Medium" to "medium", "Mute" to "mute"),
-    "auto_lock_screen" to choices(
-        "Never" to "off", "30s" to "30s", "1Min" to "1min", "2Min" to "2min", "5Min" to "5min",
-    ),
-    "auto_power_off" to choices(
-        "Never" to "off", "2Min" to "2min", "5Min" to "5min",
-        "10Min" to "10min", "20Min" to "20min", "30Min" to "30min",
-    ),
-    "default_boot_mode" to (
-        listOf(Choice("Last used", "last_used")) + MODE_LABELS.map { Choice(it.value, it.key) }
-        ),
-    "video_metering_mode" to choices("Center" to "center", "Average" to "average", "Spot" to "spot"),
-    "photo_metering_mode" to choices("Center" to "center", "Average" to "average", "Spot" to "spot"),
-    "video_white_balance" to choices(
-        "Auto" to "auto", "Sunny" to "sunny", "Cloudy" to "cloudy",
-        "Incandescent" to "incandescent", "Fluorescent" to "fluorescent",
-    ),
-    "photo_wb" to choices(
-        "Auto" to "auto", "Sunny" to "sunny", "Cloudy" to "cloudy",
-        "Incandescent" to "incandescent", "Fluorescent" to "fluorescent",
-    ),
-    "video_stamp" to choices("Off" to "off", "Date" to "date", "Date & Time" to "date_time"),
-    "photo_stamp" to choices("Off" to "off", "Date" to "date", "Date & Time" to "date_time"),
-)
-
-/** What to show in a row for a raw camera value — the stock app's label when we know it. */
-private fun displayValue(key: String, raw: String?): String {
-    if (raw.isNullOrBlank()) return "..."
-    return OPTION_CHOICES[key]?.firstOrNull { it.value.equals(raw, ignoreCase = true) }?.label ?: raw
-}
-
-private fun fieldsFor(modeValue: String): List<SettingField> = when (modeValue) {
-    "normal_record" -> VIDEO_FIELDS
-    "time_lapse_record" -> TIME_LAPSE_VIDEO_FIELDS
-    "slow_motion" -> SLOW_MOTION_FIELDS
-    "loop_record" -> LOOP_RECORD_FIELDS
-    "record_capture" -> VIDEO_PHOTO_FIELDS
-    "normal_capture" -> PHOTO_FIELDS
-    "timing_capture" -> TIMER_FIELDS
-    "continuous_capture" -> BURST_FIELDS
-    "time_lapse_capture" -> TIME_LAPSE_PHOTO_FIELDS
-    else -> PHOTO_FIELDS
-}
-
-private fun isToggleOn(field: SettingField, value: String?): Boolean = when {
-    value == null -> false
-    field.key == ROTATE_FIELD.key -> value.equals("down", ignoreCase = true)
-    else -> value.equals("on", true) || value == "1" || value.equals("true", true)
-}
-
-private fun toggleValue(field: SettingField, checked: Boolean): String = when (field.key) {
-    ROTATE_FIELD.key -> if (checked) "down" else "up"
-    else -> if (checked) "on" else "off"
-}
 
 /** Which screen inside Settings is showing — the stock app uses full screens, not dialogs. */
 private sealed interface SettingsPage {
@@ -284,37 +81,24 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val modeValue by CameraSession.currentMode.collectAsState()
     val fields = remember(modeValue) { fieldsFor(modeValue) }
 
-    var values by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val values by CameraSession.settings.collectAsState()
     var page by remember { mutableStateOf<SettingsPage>(SettingsPage.Hub) }
     var lastWriteStatus by remember { mutableStateOf<String?>(null) }
 
-    suspend fun refreshAll() {
-        values = CameraSession.client.getAllCurrentSettings().getOrNull()?.let { parseSettingsArray(it) } ?: values
-    }
+    // Everything shown here is already in memory; this just freshens it.
+    LaunchedEffect(Unit) { CameraSession.refreshSettings() }
 
-    LaunchedEffect(Unit) { refreshAll() }
-
-    // The camera applies some changes slowly (mode switches have taken 30s+
-    // to show up in its own settings dump). Reading back immediately showed
-    // the *old* value and made a successful write look like it failed, so
-    // re-read a few times before giving up on seeing the new value.
+    // The value changes on screen at once and the picker closes without
+    // waiting; the camera's answer only matters if it refuses, in which case
+    // the value snaps back and the reason is shown.
     fun writeSetting(field: SettingField, newValue: String, closePicker: Boolean = true) {
+        if (closePicker) page = SettingsPage.Camera
         scope.launch {
-            val result = CameraSession.client.setSetting(field.key, newValue)
+            val result = CameraSession.writeSetting(field.key, newValue)
             lastWriteStatus = result.fold(
                 onSuccess = { "${field.label} set to \"${displayValue(field.key, newValue)}\"" },
                 onFailure = { "Couldn't set ${field.label}: ${it.message}" },
             )
-            if (closePicker) page = SettingsPage.Camera
-            if (result.isSuccess) {
-                repeat(6) {
-                    refreshAll()
-                    if (values[field.key].equals(newValue, ignoreCase = true)) return@launch
-                    delay(2000)
-                }
-            } else {
-                refreshAll()
-            }
         }
     }
 
@@ -726,10 +510,9 @@ private fun WifiSettingsPage(padding: PaddingValues, onCancel: () -> Unit, onSav
 
 /**
  * A full-screen option list, matching the stock app: the current value is
- * highlighted and marked with a leading chevron. GET_SINGLE_SETTING_OPTIONS
- * comes back empty even for confirmed-correct keys on this firmware, so the
- * lists come from the confirmed EV values, then the stock app's own pickers
- * (KNOWN_OPTIONS), then a live query attempt, then free text.
+ * highlighted and marked with a leading chevron. The lists come from the
+ * camera's own option query (already cached by the time this opens), so every
+ * setting is a choice — nothing is typed in by hand.
  */
 @Composable
 private fun OptionPickerPage(
@@ -738,82 +521,82 @@ private fun OptionPickerPage(
     currentValue: String,
     onPick: (String) -> Unit,
 ) {
-    val isEv = field.key.endsWith("_ev_bias")
-    val curated = OPTION_CHOICES[field.key]
-        ?: EV_OPTIONS.map { Choice(it, it) }.takeIf { isEv }
-    var options by remember { mutableStateOf(curated) }
-    var manualEntry by remember { mutableStateOf(false) }
-    var text by remember { mutableStateOf(currentValue) }
+    val allOptions by CameraSession.options.collectAsState()
+    val mode by CameraSession.currentMode.collectAsState()
+    val entry = allOptions[field.key]
+    var failed by remember(field.key) { mutableStateOf(false) }
 
     LaunchedEffect(field.key) {
-        if (curated != null) return@LaunchedEffect
-        options = CameraSession.client.getSettingOptions(field.key).getOrNull()?.let { json ->
-            json.optJSONArray("param")?.let { arr ->
-                (0 until arr.length()).mapNotNull { i -> arr.opt(i)?.toString()?.let { Choice(it, it) } }
-            }
-        } ?: emptyList()
+        if (CameraSession.options.value[field.key] == null) {
+            failed = CameraSession.fetchOptions(field.key) == null
+        }
     }
 
-    val current = options
     when {
-        current == null -> Box(
+        entry == null && failed -> Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Couldn't load the choices for ${field.label} from the camera.")
+            Button(
+                onClick = { failed = false },
+                modifier = Modifier.padding(top = 16.dp),
+            ) { Text("Retry") }
+        }
+
+        entry == null -> Box(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentAlignment = Alignment.Center,
         ) { CircularProgressIndicator() }
 
-        manualEntry || current.isEmpty() -> Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
-            if (current.isEmpty()) {
-                Text(
-                    "The camera doesn't report selectable options for \"${field.key}\" — enter a value manually.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Text("Current: $currentValue", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("New value") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-            Button(onClick = { onPick(text) }, modifier = Modifier.padding(top = 16.dp)) { Text("Save") }
-        }
-
-        else -> LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-            items(current) { option ->
-                val selected = option.value.equals(currentValue, ignoreCase = true)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().clickable { onPick(option.value) }
-                        .padding(horizontal = 16.dp, vertical = 18.dp),
-                ) {
-                    if (selected) {
-                        Icon(
-                            Icons.Filled.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(end = 8.dp),
+        else -> {
+            // "Read-only" only counts if it was reported for the mode we're in now.
+            val locked = !entry.settable && entry.fetchedInMode == mode
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+                if (locked) {
+                    item {
+                        Text(
+                            "${field.label} can't be changed in this shooting mode.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
                         )
-                    } else {
-                        Spacer(Modifier.size(width = 32.dp, height = 1.dp))
                     }
-                    Text(
-                        option.label,
-                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    )
                 }
-                HorizontalDivider()
-            }
-            item {
-                Text(
-                    "Other...",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.fillMaxWidth().clickable { manualEntry = true }.padding(16.dp),
-                )
+                items(entry.values) { option ->
+                    val selected = option.equals(currentValue, ignoreCase = true)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable(enabled = !locked) { onPick(option) }
+                            .padding(horizontal = 16.dp, vertical = 18.dp),
+                    ) {
+                        if (selected) {
+                            Icon(
+                                Icons.Filled.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        } else {
+                            Spacer(Modifier.size(width = 32.dp, height = 1.dp))
+                        }
+                        Text(
+                            displayValue(field.key, option),
+                            color = when {
+                                locked -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                selected -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                    }
+                    HorizontalDivider()
+                }
             }
         }
     }
 }
+
 
 private fun formatStorage(free: Long?, total: Long?): String {
     fun gb(bytes: Long) = "%.1fG".format(bytes / 1024.0 / 1024.0 / 1024.0)

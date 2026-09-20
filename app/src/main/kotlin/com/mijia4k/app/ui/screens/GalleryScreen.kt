@@ -210,22 +210,34 @@ fun GalleryScreen(onBack: () -> Unit) {
         scope.launch {
             var ok = 0
             var failed = 0
+            // Connect the socket — delete goes through TCP 7878, not HTTP.
+            if (!CameraSession.client.isConnected) {
+                val conn = CameraSession.connect(context)
+                if (conn.isFailure) {
+                    deleting = false
+                    snackbarHostState.showSnackbar("Connect to the camera first to delete files")
+                    return@launch
+                }
+            }
             for (item in toDelete) {
-                // Delete every file that belongs to this group: the original,
-                // its proxy (.THM), and its RAW (.DNG) if present.
-                val paths = item.downloadable.map { it.path } +
-                    listOfNotNull(item.playbackFile?.path?.takeIf { it != item.mediaFile?.path })
-                for (path in paths.distinct()) {
-                    val result = CameraSession.client.deleteFile(path)
-                    if (result.isSuccess) ok++ else failed++
+                // Delete the original + proxy (.THM) + RAW (.DNG).
+                val files = (item.downloadable +
+                    listOfNotNull(item.playbackFile?.takeIf { it != item.mediaFile }))
+                    .distinctBy { it.path }
+                for (file in files) {
+                    val result = CameraSession.client.deleteFile(file.path)
+                    if (result.isSuccess) ok++ else {
+                        android.util.Log.w("Gallery", "Delete failed for ${file.path}: ${result.exceptionOrNull()}")
+                        failed++
+                    }
                 }
             }
             deleting = false
             selected = emptySet()
             val msg = when {
                 failed == 0 -> "Deleted $ok file(s) from camera"
-                ok == 0 -> "Delete failed — is the camera connected?"
-                else -> "Deleted $ok, failed $failed — check connection"
+                ok == 0 -> "Delete failed — ${if (offline) "not available offline" else "camera refused"}"
+                else -> "Deleted $ok, failed $failed"
             }
             snackbarHostState.showSnackbar(msg)
             if (ok > 0) refresh()

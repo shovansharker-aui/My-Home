@@ -44,9 +44,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.ArrowDropDown
+import com.mijia4k.app.net.SettingField
+import com.mijia4k.app.net.fieldsFor
+import com.mijia4k.app.net.toggleValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -129,13 +136,18 @@ fun ShootScreen(
     var recordStartedAt by remember { mutableStateOf(0L) }
     var elapsedSeconds by remember { mutableStateOf(0) }
     var status by remember { mutableStateOf<String?>(null) }
-    var currentMode by remember { mutableStateOf(DEFAULT_MODE) }
+    val sessionMode by CameraSession.currentMode.collectAsState()
+    val currentMode = CAMERA_MODES.firstOrNull { it.value == sessionMode } ?: DEFAULT_MODE
+    val sessionSettings by CameraSession.settings.collectAsState()
+
+    // A mode change, from a tap here or from the camera itself, ends whatever "recording" state was showing.
+    LaunchedEffect(sessionMode) { recording = false }
     // What the camera itself last reported for mode_setting, whether or not
     // it matches one of our values — shown so a wrong guess is visible
     // instead of silently invisible.
     var cameraReportedMode by remember { mutableStateOf<String?>(null) }
     var showModeDialog by remember { mutableStateOf(false) }
-    var liveInfo by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var openField by remember { mutableStateOf<SettingField?>(null) }
     var showGrid by remember { mutableStateOf(false) }
     var distortionCorrection by remember { mutableStateOf<Boolean?>(null) }
     var remainingVideoSeconds by remember { mutableStateOf<Int?>(null) }
@@ -177,20 +189,11 @@ fun ShootScreen(
                 // can't be stopped; the camera's state is unknown from here.
                 recording = false
             } else {
-                CameraSession.client.getAllCurrentSettings().getOrNull()?.let { json ->
-                    val map = parseSettingsArray(json)
-                    map["mode_setting"]?.let { raw ->
-                        cameraReportedMode = raw
-                        CAMERA_MODES.firstOrNull { it.value == raw }?.let { matched ->
-                            if (matched != currentMode) recording = false
-                            currentMode = matched
-                            CameraSession.currentModeValue = matched.value
-                        }
-                    }
+                CameraSession.refreshSettings()?.let { map ->
+                    cameraReportedMode = map["mode_setting"]
                     // Reflect the camera's actual state rather than assuming
                     // it starts enabled — the icon used to be able to lie.
                     map["distortion_correction"]?.let { distortionCorrection = it.equals("on", true) }
-                    liveInfo = liveInfoFor(currentMode.value, map)
                 }
                 // Card space and battery move slowly, and every command is
                 // serialized behind a 600ms inter-command gap — polling them
@@ -393,30 +396,27 @@ fun ShootScreen(
                 modifier = Modifier.padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    currentMode.label,
-                    style = MaterialTheme.typography.titleMedium,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .padding(4.dp)
-                        .pointerInput(Unit) { detectTapGestures(onTap = { showModeDialog = true }) },
-                )
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50))
+                        .clickable { showModeDialog = true }
+                        .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                ) {
+                    Icon(currentMode.icon, contentDescription = null, tint = MijiaTeal, modifier = Modifier.size(20.dp))
+                    Text(
+                        currentMode.label,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                    Icon(Icons.Filled.ArrowDropDown, contentDescription = "Change mode")
+                }
                 if (cameraReportedMode != null && CAMERA_MODES.none { it.value == cameraReportedMode }) {
                     Text(
                         " (camera reports: \"$cameraReportedMode\")",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                }
-            }
-
-            if (liveInfo.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    for ((key, value) in liveInfo) {
-                        Text("$key: $value", style = MaterialTheme.typography.bodySmall)
-                    }
                 }
             }
 
@@ -488,10 +488,41 @@ fun ShootScreen(
                     onClick = onOpenSettings,
                     modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
                 ) {
-                    Icon(Icons.Filled.Settings, contentDescription = "Mode settings")
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
                 }
             }
+
+            // Settings for the current mode, right under the shutter row.
+            ModeSettingsBar(
+                fields = remember(sessionMode) { fieldsFor(sessionMode) },
+                settings = sessionSettings,
+                enabled = connected,
+                onToggle = { field, next ->
+                    scope.launch {
+                        CameraSession.writeSetting(field.key, toggleValue(field, next)).onFailure {
+                            status = "Couldn't set ${field.label}: ${it.message}"
+                        }
+                    }
+                },
+                onOpen = { openField = it },
+            )
         }
+    }
+
+    openField?.let { field ->
+        SettingOptionSheet(
+            field = field,
+            currentValue = sessionSettings[field.key],
+            onPick = { value ->
+                openField = null
+                scope.launch {
+                    CameraSession.writeSetting(field.key, value).onFailure {
+                        status = "Couldn't set ${field.label}: ${it.message}"
+                    }
+                }
+            },
+            onDismiss = { openField = null },
+        )
     }
 
     if (showModeDialog) {
@@ -509,13 +540,17 @@ fun ShootScreen(
                                 .pointerInput(mode) {
                                     detectTapGestures(onTap = {
                                         showModeDialog = false
-                                        // Don't flip the highlighted mode
-                                        // optimistically — send the command,
-                                        // then let the poll loop confirm what
-                                        // the camera actually switched to.
-                                        // Some modes take 30s+ to apply.
-                                        runCommand("Set mode ${mode.label}") {
-                                            CameraSession.client.setCameraMode(mode.value)
+                                        // The highlight and every mode-specific
+                                        // value flip right now; the camera confirms
+                                        // in the background and the UI only snaps
+                                        // back if it refuses.
+                                        if (mode.value != sessionMode) {
+                                            recording = false
+                                            scope.launch {
+                                                CameraSession.switchMode(mode.value).onFailure {
+                                                    status = "Set mode ${mode.label} failed: ${it.message}"
+                                                }
+                                            }
                                         }
                                     })
                                 },
@@ -563,38 +598,3 @@ private fun formatDuration(totalSeconds: Int): String {
     return "%02d:%02d".format(m, s)
 }
 
-// Key -> display label, using the real field keys confirmed from the
-// camera's own GET_ALL_CURRENT_SETTINGS dump.
-private val LIVE_INFO_LABELS = mapOf(
-    "video_resolution" to "Resolution",
-    "video_quality" to "Quality",
-    "video_rate" to "Speed",
-    "video_loop_length" to "Length",
-    "video_time_lapse" to "Interval",
-    "video_piv_time_lapse" to "Interval",
-    "photo_time_lapse" to "Interval",
-    "photo_iso" to "ISO",
-    "photo_shutter" to "Shutter",
-    "photo_metering_mode" to "Metering",
-    "photo_selftimer" to "Countdown",
-    "photo_burst_frequence" to "Rate",
-    "photo_size" to "Size",
-)
-
-private val LIVE_INFO_KEYS_BY_MODE = mapOf(
-    "normal_record" to listOf("video_resolution", "video_quality"),
-    "time_lapse_record" to listOf("video_time_lapse", "video_resolution"),
-    "slow_motion" to listOf("video_rate", "video_quality"),
-    "loop_record" to listOf("video_loop_length", "video_resolution"),
-    "record_capture" to listOf("video_piv_time_lapse", "video_resolution"),
-    "normal_capture" to listOf("photo_iso", "photo_shutter", "photo_metering_mode"),
-    "timing_capture" to listOf("photo_selftimer", "photo_iso"),
-    "continuous_capture" to listOf("photo_burst_frequence", "photo_iso"),
-    "time_lapse_capture" to listOf("photo_time_lapse", "photo_iso"),
-)
-
-/** Picks the 2-3 most relevant fields to show for the current mode, using the real (confirmed) field keys. */
-private fun liveInfoFor(mode: String, settings: Map<String, String>): List<Pair<String, String>> {
-    val keys = LIVE_INFO_KEYS_BY_MODE[mode] ?: listOf("video_resolution", "video_quality")
-    return keys.mapNotNull { key -> settings[key]?.let { value -> (LIVE_INFO_LABELS[key] ?: key) to value } }
-}
