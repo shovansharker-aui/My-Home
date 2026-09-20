@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +19,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timelapse
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Videocam
+import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +55,20 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import com.mijia4k.app.net.SettingField
 import com.mijia4k.app.net.fieldsFor
 import com.mijia4k.app.net.toggleValue
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalView
+import com.mijia4k.app.ui.HardwareKeys
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +84,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -122,6 +140,9 @@ private val DEFAULT_MODE = CAMERA_MODES.first { it.value == "time_lapse_record" 
 /** Storage/battery are refreshed every Nth settings poll (~30s) rather than every 3s. */
 private const val SLOW_POLL_EVERY = 10
 
+/** Digital zoom ceiling for the live preview. */
+private const val MAX_ZOOM = 10f
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShootScreen(
@@ -130,6 +151,7 @@ fun ShootScreen(
     onOpenSettings: () -> Unit,
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
     var connected by remember { mutableStateOf(false) }
@@ -144,12 +166,30 @@ fun ShootScreen(
 
     // A mode change, from a tap here or from the camera itself, ends whatever "recording" state was showing.
     LaunchedEffect(sessionMode) { recording = false }
+
+    // The camera reports what it is doing. Follow its changes so a recording
+    // started elsewhere (its own button, a previous session) shows the stop
+    // button instead of a shutter that would try to start a second one.
+    val appStatus = sessionSettings["app_status"]
+    LaunchedEffect(appStatus) {
+        if (appStatus == null) return@LaunchedEffect
+        val cameraIsRecording = appStatus.contains("record")
+        if (cameraIsRecording && !recording) {
+            recordStartedAt = System.currentTimeMillis()
+            recording = true
+        } else if (!cameraIsRecording && recording) {
+            recording = false
+        }
+    }
     var showModeDialog by remember { mutableStateOf(false) }
     var openField by remember { mutableStateOf<SettingField?>(null) }
     var showGrid by remember { mutableStateOf(false) }
+    var zoom by remember { mutableStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
+    var previewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     var distortionCorrection by remember { mutableStateOf<Boolean?>(null) }
-    var remainingVideoSeconds by remember { mutableStateOf<Int?>(null) }
-    var batteryPercent by remember { mutableStateOf<Int?>(null) }
+    var freeBytes by remember { mutableStateOf<Long?>(null) }
+    var battery by remember { mutableStateOf<com.mijia4k.app.net.AmbaSocketClient.BatteryStatus?>(null) }
     var lastThumb by remember { mutableStateOf<Any?>(null) }
 
     LaunchedEffect(Unit) {
@@ -196,10 +236,10 @@ fun ShootScreen(
                 // serialized behind a 600ms inter-command gap — polling them
                 // each cycle would park the shutter behind four round trips.
                 if (tick % SLOW_POLL_EVERY == 0) {
-                    remainingVideoSeconds = CameraSession.client.getStorageStatus().remainingVideoSeconds
+                    freeBytes = CameraSession.client.getStorageStatus().freeBytes
                     // Not every firmware answers this one; it stays hidden
                     // rather than showing a bogus level if the camera refuses.
-                    batteryPercent = CameraSession.client.getBatteryLevel().getOrNull()?.takeIf { it in 0..100 }
+                    battery = CameraSession.client.getBattery().getOrNull()?.takeIf { it.level in 0..100 }
                 }
             }
             tick++
@@ -271,19 +311,59 @@ fun ShootScreen(
         }
     }
 
+    fun triggerShutter() {
+        if (!connected || busy) return
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        // The recording flag only moves once the camera has actually accepted
+        // the command — flipping it optimistically left a red stop button (and
+        // a running timer) over a camera that never started.
+        if (currentMode.isRecording) {
+            if (recording) {
+                runCommand("Stop recording", spin = true, onSuccess = { recording = false }) {
+                    CameraSession.client.stopRecording()
+                }
+            } else {
+                runCommand(
+                    "Start recording",
+                    spin = true,
+                    onSuccess = {
+                        recordStartedAt = System.currentTimeMillis()
+                        recording = true
+                    },
+                ) { CameraSession.client.startRecording() }
+            }
+        } else {
+            runCommand("Shutter", spin = true) { CameraSession.client.takePhoto() }
+        }
+    }
+
+    // Hardware volume keys act as a shutter while this screen is showing.
+    LaunchedEffect(Unit) {
+        HardwareKeys.shutterScreenActive = true
+        HardwareKeys.shutter.collect { triggerShutter() }
+    }
+    DisposableEffect(Unit) { onDispose { HardwareKeys.shutterScreenActive = false } }
+
+    // A live view you are watching should not dim and lock.
+    val hostView = LocalView.current
+    DisposableEffect(Unit) {
+        hostView.keepScreenOn = true
+        onDispose { hostView.keepScreenOn = false }
+    }
+
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Mi Action Camera 4K") },
+            // Landscape gives the whole height to the preview; Settings is a swipe down away.
+            if (!landscape) TopAppBar(
+                title = {},
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    batteryPercent?.let {
-                        Text("$it%", style = MaterialTheme.typography.bodySmall)
-                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
@@ -291,31 +371,37 @@ fun ShootScreen(
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                // Swipe right-to-left anywhere on this screen to jump into
-                // the full Album, like flicking to the next screen.
-                .pointerInput(Unit) {
+        val gestureModifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            // Swipe down anywhere for Camera Settings; swipe left for the Album.
+            // Watches touches on the way down without consuming them, so the
+            // controls' own scrolling and taps still work; skipped while zoomed
+            // in (that drag pans the preview) or pinching.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     var dx = 0f
                     var dy = 0f
-                    detectDragGestures(
-                        onDragStart = { dx = 0f; dy = 0f },
-                        onDragEnd = {
-                            when {
-                                dy > 160f && dy > kotlin.math.abs(dx) -> onOpenSettings()
-                                dx < -150f && kotlin.math.abs(dx) > kotlin.math.abs(dy) -> onOpenGallery()
-                            }
-                        },
-                    ) { change, amount ->
-                        change.consume()
-                        dx += amount.x
-                        dy += amount.y
+                    var multiTouch = false
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.size > 1) multiTouch = true
+                        event.changes.firstOrNull()?.let {
+                            dx += it.positionChange().x
+                            dy += it.positionChange().y
+                        }
+                    } while (event.changes.any { it.pressed })
+                    if (!multiTouch && zoom <= 1f) {
+                        when {
+                            dy > 160f && dy > kotlin.math.abs(dx) -> onOpenSettings()
+                            dx < -150f && kotlin.math.abs(dx) > kotlin.math.abs(dy) -> onOpenGallery()
+                        }
                     }
-                },
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+                }
+            }
+
+        val toolsRow: @Composable () -> Unit = {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -346,10 +432,51 @@ fun ShootScreen(
                     )
                 }
             }
+        }
 
-            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
+        val preview: @Composable (Modifier) -> Unit = { mod ->
+            Box(
+                mod
+                    .background(Color.Black)
+                    .clipToBounds()
+                    .onSizeChanged { previewSize = it }
+                    .pointerInput(Unit) {
+                        // Pinch to zoom up to 10x, drag to pan once zoomed, double-tap to
+                        // jump between 1x and 3x. A one-finger swipe at 1x is left alone
+                        // so swipe-down (Settings) and swipe-left (Album) still work.
+                        detectTapGestures(onDoubleTap = {
+                            if (zoom > 1.01f) { zoom = 1f; pan = Offset.Zero } else zoom = 3f
+                        })
+                    }
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            do {
+                                val event = awaitPointerEvent()
+                                val zoomChange = event.calculateZoom()
+                                val panChange = event.calculatePan()
+                                if (zoomChange != 1f || zoom > 1f) {
+                                    val newZoom = (zoom * zoomChange).coerceIn(1f, MAX_ZOOM)
+                                    val maxX = (previewSize.width * (newZoom - 1f)) / 2f
+                                    val maxY = (previewSize.height * (newZoom - 1f)) / 2f
+                                    pan = Offset(
+                                        (pan.x + panChange.x).coerceIn(-maxX, maxX),
+                                        (pan.y + panChange.y).coerceIn(-maxY, maxY),
+                                    )
+                                    zoom = newZoom
+                                    if (zoom <= 1f) pan = Offset.Zero
+                                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                }
+                            } while (event.changes.any { it.pressed })
+                        }
+                    },
+            ) {
                 AndroidView(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().graphicsLayer(
+                        scaleX = zoom,
+                        scaleY = zoom,
+                        translationX = pan.x,
+                        translationY = pan.y,
+                    ),
                     factory = { ctx ->
                         PlayerView(ctx).apply {
                             this.player = player
@@ -361,6 +488,20 @@ fun ShootScreen(
                     },
                 )
                 if (showGrid) GridOverlay(Modifier.fillMaxSize())
+                battery?.let { BatteryBadge(it, Modifier.align(Alignment.TopStart).padding(8.dp)) }
+                if (zoom > 1.01f) {
+                    Text(
+                        "%.1f×".format(zoom),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(8.dp)
+                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(50))
+                            .clickable { zoom = 1f; pan = Offset.Zero }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
 
                 if (previewFailed) {
                     Column(
@@ -368,7 +509,10 @@ fun ShootScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text("Live preview stopped", color = Color.White)
-                        TextButton(onClick = { previewFailed = false }) { Text("Retry") }
+                        TextButton(onClick = {
+                            scope.launch { CameraSession.ensureViewfinder() }
+                            previewFailed = false
+                        }) { Text("Retry") }
                     }
                 }
 
@@ -377,18 +521,34 @@ fun ShootScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    remainingVideoSeconds?.takeIf { !recording }?.let {
-                        Text(formatDuration(it), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    freeBytes?.takeIf { !recording }?.let {
+                        Text(
+                            "${formatFree(it)} free",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(50))
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
                     }
                     if (recording) {
-                        Text(formatDuration(elapsedSeconds), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            formatDuration(elapsedSeconds),
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(50))
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
                         Box(Modifier.size(8.dp).background(Color.Red, CircleShape))
                     }
                 }
             }
+        }
 
+        val controls: @Composable () -> Unit = {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp, horizontal = 32.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = if (landscape) 12.dp else 24.dp, horizontal = 32.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -408,30 +568,7 @@ fun ShootScreen(
 
                 IconButton(
                     enabled = connected && !busy,
-                    onClick = {
-                        // The recording flag only moves once the camera has
-                        // actually accepted the command — flipping it
-                        // optimistically left a red stop button (and a
-                        // running timer) over a camera that never started.
-                        if (currentMode.isRecording) {
-                            if (recording) {
-                                runCommand("Stop recording", spin = true, onSuccess = { recording = false }) {
-                                    CameraSession.client.stopRecording()
-                                }
-                            } else {
-                                runCommand(
-                                    "Start recording",
-                                    spin = true,
-                                    onSuccess = {
-                                        recordStartedAt = System.currentTimeMillis()
-                                        recording = true
-                                    },
-                                ) { CameraSession.client.startRecording() }
-                            }
-                        } else {
-                            runCommand("Shutter", spin = true) { CameraSession.client.takePhoto() }
-                        }
-                    },
+                    onClick = { triggerShutter() },
                     modifier = Modifier
                         .size(72.dp)
                         .background(if (recording) Color.Red else MijiaTeal, CircleShape),
@@ -451,12 +588,16 @@ fun ShootScreen(
                     Icon(currentMode.icon, contentDescription = "Change mode (${currentMode.label})", tint = MijiaTeal)
                 }
             }
+        }
 
-            // Settings for the current mode, right under the shutter row.
+        // Settings for the current mode, right under the shutter row.
+        val params: @Composable (Int, androidx.compose.ui.unit.Dp) -> Unit = { perRow, chipWidth ->
             ModeSettingsBar(
                 fields = remember(sessionMode) { fieldsFor(sessionMode) },
                 settings = sessionSettings,
                 enabled = connected,
+                perRow = perRow,
+                chipWidth = chipWidth,
                 onToggle = { field, next ->
                     scope.launch {
                         CameraSession.writeSetting(field.key, toggleValue(field, next)).onFailure { Log.w("ShootScreen", "set ${field.key} failed", it) }
@@ -464,6 +605,31 @@ fun ShootScreen(
                 },
                 onOpen = { openField = it },
             )
+        }
+
+        if (landscape) {
+            // Preview takes the left two thirds; everything else stacks in the right third.
+            Row(gestureModifier) {
+                Box(Modifier.weight(2f).fillMaxHeight().background(Color.Black)) {
+                    preview(Modifier.fillMaxSize())
+                }
+                Column(
+                    modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    toolsRow()
+                    controls()
+                    params(5, 56.dp)
+                }
+            }
+        } else {
+            Column(gestureModifier, horizontalAlignment = Alignment.CenterHorizontally) {
+                toolsRow()
+                preview(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                controls()
+                params(5, 64.dp)
+            }
         }
     }
 
@@ -552,3 +718,8 @@ private fun formatDuration(totalSeconds: Int): String {
     return "%02d:%02d".format(m, s)
 }
 
+
+private fun formatFree(bytes: Long): String {
+    val gb = bytes / 1024.0 / 1024.0 / 1024.0
+    return if (gb >= 1.0) "%.1f GB".format(gb) else "%d MB".format((bytes / 1024 / 1024).toInt())
+}

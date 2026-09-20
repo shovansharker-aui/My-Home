@@ -46,6 +46,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -115,12 +118,18 @@ fun GalleryScreen(onBack: () -> Unit) {
     var downloading by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf(AlbumFilter.ALL) }
     // Keyed, not indexed: the list can be replaced while the viewer is open
     // (the sync pass rebuilds it), and an index into the old list then either
     // showed the wrong shot or crashed on out-of-bounds.
     var viewerKey by remember { mutableStateOf<String?>(null) }
 
     val selectionMode = selected.isNotEmpty()
+    val visible = when (filter) {
+        AlbumFilter.ALL -> items
+        AlbumFilter.PHOTOS -> items.filter { !it.isVideo }
+        AlbumFilter.VIDEOS -> items.filter { it.isVideo }
+    }
 
     fun buildItems(groups: List<CameraHttpClient.MediaGroup>): List<GalleryItem> = groups.map { group ->
         val cachedThumb = previewCache.localFileFor(group)?.takeIf { it.exists() }
@@ -250,6 +259,9 @@ fun GalleryScreen(onBack: () -> Unit) {
                 },
                 actions = {
                     if (selectionMode) {
+                        IconButton(onClick = { selected = visible.map { it.key }.toSet() }) {
+                            Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
+                        }
                         IconButton(enabled = !downloading && !deleting, onClick = { downloadSelected() }) {
                             Icon(Icons.Filled.Download, contentDescription = "Download selected")
                         }
@@ -265,17 +277,29 @@ fun GalleryScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+        if (!loading && error == null && items.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (option in AlbumFilter.entries) {
+                    FilterChip(
+                        selected = filter == option,
+                        onClick = { filter = option },
+                        label = { Text(option.label) },
+                    )
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 error != null -> Text(error.orEmpty(), modifier = Modifier.align(Alignment.Center).padding(24.dp))
-                items.isEmpty() -> Text("No photos or videos found", modifier = Modifier.align(Alignment.Center))
+                visible.isEmpty() -> Text("Nothing here", modifier = Modifier.align(Alignment.Center))
                 else -> LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(2.dp),
                 ) {
-                    itemsIndexed(items, key = { _, item -> item.key }) { _, item ->
+                    itemsIndexed(visible, key = { _, item -> item.key }) { _, item ->
                         GridCell(
                             item = item,
                             imageLoader = imageLoader,
@@ -298,6 +322,7 @@ fun GalleryScreen(onBack: () -> Unit) {
             if (downloading || deleting) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp))
             }
+        }
         }
     }
 
@@ -472,19 +497,18 @@ private fun MediaPagerViewer(
     }
 
     if (showInfo) {
-        AlertDialog(
-            onDismissRequest = { showInfo = false },
-            confirmButton = { TextButton(onClick = { showInfo = false }) { Text("Close") } },
-            title = { Text(current.name) },
-            text = {
-                Column {
-                    Text("Type: ${if (current.isVideo) "Video" else "Image"}")
-                    current.mediaFile?.sizeBytes?.let { Text("Size: ${it / 1024} KB") }
-                    current.downloadable.drop(1).forEach { Text("Also: ${it.name}") }
-                    Text("Poster cached locally: ${current.localThumb != null}")
-                    if (current.mediaFile == null) Text("Only the cached poster is available offline")
-                }
-            },
+        MediaInfoPanel(
+            data = MediaInfoData(
+                name = current.name,
+                isVideo = current.isVideo,
+                imageModel = if (current.isVideo) null else (current.mediaFile?.url ?: current.thumbModel),
+                fileUrl = current.mediaFile?.url,
+                folder = current.mediaFile?.path?.substringBeforeLast('/'),
+                sizeBytes = current.mediaFile?.sizeBytes,
+                extraFiles = current.downloadable.drop(1).map { it.name },
+            ),
+            imageLoader = imageLoader,
+            onClose = { showInfo = false },
         )
     }
 }
@@ -613,3 +637,5 @@ private fun ZoomableImage(model: Any, imageLoader: ImageLoader, contentDescripti
             },
     )
 }
+
+private enum class AlbumFilter(val label: String) { ALL("All"), PHOTOS("Photos"), VIDEOS("Videos") }

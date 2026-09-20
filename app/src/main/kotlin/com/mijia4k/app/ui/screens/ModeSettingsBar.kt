@@ -101,6 +101,8 @@ fun ModeSettingsBar(
     fields: List<SettingField>,
     settings: Map<String, String>,
     enabled: Boolean,
+    perRow: Int = 5,
+    chipWidth: androidx.compose.ui.unit.Dp = 64.dp,
     onToggle: (SettingField, Boolean) -> Unit,
     onOpen: (SettingField) -> Unit,
     modifier: Modifier = Modifier,
@@ -109,7 +111,7 @@ fun ModeSettingsBar(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        for (rowFields in fields.chunked(5)) Row(
+        for (rowFields in fields.chunked(perRow)) Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
@@ -119,7 +121,7 @@ fun ModeSettingsBar(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(64.dp)
+                    .width(chipWidth)
                     .clickable(enabled = enabled) { if (field.isToggle) onToggle(field, !on) else onOpen(field) },
             ) {
                 Box(

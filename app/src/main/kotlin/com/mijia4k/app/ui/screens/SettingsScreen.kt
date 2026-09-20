@@ -34,6 +34,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.platform.LocalContext
+import com.mijia4k.app.ui.AppOrientation
+import com.mijia4k.app.ui.OrientationMode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -234,6 +238,12 @@ private fun CameraSettingsList(
     var deviceInfoError by remember { mutableStateOf<String?>(null) }
     var storage by remember { mutableStateOf<AmbaSocketClient.StorageStatus?>(null) }
     var showRestoreConfirm by remember { mutableStateOf(false) }
+    var showOrientation by remember { mutableStateOf(false) }
+    var showShutdown by remember { mutableStateOf(false) }
+    var shutdownResult by remember { mutableStateOf<String?>(null) }
+    val offScope = rememberCoroutineScope()
+    val orientation by AppOrientation.mode.collectAsState()
+    val appContext = LocalContext.current
     var showTimeSync by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -256,6 +266,7 @@ private fun CameraSettingsList(
             )
             HorizontalDivider()
             InfoRow("SD card", formatStorage(storage?.freeBytes, storage?.totalBytes), onClick = onOpenSdCard)
+            InfoRow("Screen orientation", orientation.label, onClick = { showOrientation = true })
         }
 
         item { SectionHeader("Device Info") }
@@ -279,6 +290,12 @@ private fun CameraSettingsList(
             )
             HorizontalDivider()
             ListItem(
+                headlineContent = { Text("Turn off camera", color = Color(0xFFD64545)) },
+                supportingContent = { Text("Switches off after about 2 minutes") },
+                modifier = Modifier.clickable { showShutdown = true },
+            )
+            HorizontalDivider()
+            ListItem(
                 headlineContent = { Text("Diagnostics (advanced/debug)") },
                 trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
                 modifier = Modifier.clickable(onClick = onOpenDiagnostics),
@@ -296,6 +313,64 @@ private fun CameraSettingsList(
         }
     }
 
+
+    if (showOrientation) {
+        AlertDialog(
+            onDismissRequest = { showOrientation = false },
+            confirmButton = { TextButton(onClick = { showOrientation = false }) { Text("Close") } },
+            title = { Text("Screen orientation") },
+            text = {
+                Column {
+                    for (option in OrientationMode.entries) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                AppOrientation.set(appContext, option)
+                                showOrientation = false
+                            }.padding(vertical = 12.dp),
+                        ) {
+                            RadioButton(selected = option == orientation, onClick = null)
+                            Text(option.label, modifier = Modifier.padding(start = 12.dp))
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    if (showShutdown) {
+        AlertDialog(
+            onDismissRequest = { showShutdown = false; shutdownResult = null },
+            title = { Text("Turn off camera") },
+            text = {
+                Text(
+                    shutdownResult
+                        ?: "The camera will switch itself off in about 2 minutes. The app stops talking to it so it can " +
+                        "go idle, and puts your usual auto power-off time back the next time you connect.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (shutdownResult != null) {
+                            showShutdown = false
+                            shutdownResult = null
+                        } else {
+                            offScope.launch {
+                                shutdownResult = CameraSession.scheduleShutdown(appContext).fold(
+                                    onSuccess = { "Done. The camera will switch off shortly." },
+                                    onFailure = { "Couldn't schedule it: ${it.message}" },
+                                )
+                            }
+                        }
+                    },
+                ) { Text(if (shutdownResult != null) "OK" else "Turn off", color = if (shutdownResult == null) Color(0xFFD64545) else Color.Unspecified) }
+            },
+            dismissButton = {
+                if (shutdownResult == null) TextButton(onClick = { showShutdown = false }) { Text("Cancel") }
+            },
+        )
+    }
     if (showTimeSync) {
         CameraTimeSyncDialog(onDismiss = { showTimeSync = false })
     }

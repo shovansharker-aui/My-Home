@@ -114,6 +114,9 @@ class AmbaSocketClient(
 
     suspend fun takePhoto(): Result<JSONObject> = command(MsgId.TAKE_PHOTO)
 
+    /** Starts the live feed; without it the camera answers RTSP with a stream that has no video track. */
+    suspend fun startViewfinder(): Result<JSONObject> = command(MsgId.START_VIEWFINDER, param = "none_force")
+
     suspend fun startRecording(): Result<JSONObject> = command(MsgId.RECORD_START)
 
     suspend fun stopRecording(): Result<JSONObject> = command(MsgId.RECORD_STOP)
@@ -121,8 +124,16 @@ class AmbaSocketClient(
     suspend fun getRecordTimeSeconds(): Result<Int> =
         command(MsgId.GET_RECORD_TIME).map { it.optInt("param", 0) }
 
-    suspend fun getBatteryLevel(): Result<Int> =
-        command(MsgId.GET_BATTERY_LEVEL).map { it.optInt("param", -1) }
+    /** [charging] is true when the camera reports power from the adapter/USB rather than its battery. */
+    data class BatteryStatus(val level: Int, val charging: Boolean)
+
+    /** The camera answers `{"param":"adapter"|"battery","level":"87"}` — the level is a string. */
+    suspend fun getBattery(): Result<BatteryStatus> = command(MsgId.GET_BATTERY_LEVEL).map {
+        BatteryStatus(
+            level = it.optString("level").toIntOrNull() ?: -1,
+            charging = it.optString("param").equals("adapter", ignoreCase = true),
+        )
+    }
 
     /** Card capacity plus what the camera thinks still fits on it. */
     data class StorageStatus(
@@ -352,6 +363,7 @@ object MsgId {
     const val TAKE_PHOTO = 769
     const val SET_WIFI = 2055
     const val DELETE_FILE = 1281
+    const val START_VIEWFINDER = 259
 }
 
 object CameraEndpoints {

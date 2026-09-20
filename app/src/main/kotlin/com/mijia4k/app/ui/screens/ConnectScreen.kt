@@ -2,32 +2,18 @@ package com.mijia4k.app.ui.screens
 
 import android.content.Intent
 import android.provider.Settings
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Photo
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,26 +27,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.mijia4k.app.net.CameraSession
-import com.mijia4k.app.ui.theme.MijiaTeal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private enum class ConnState { CHECKING, CONNECTED, FAILED }
-
 /**
- * The app's landing page, styled after the stock Mi Home app's device page:
- * a hero image, then "Connect to camera" and "Album" rows. Unlike the stock
- * app (which waits for a tap before dialing the camera), this screen starts
- * connecting the moment it appears — by the time the user taps "Connect to
- * camera" the handshake is usually already done, and a slow/failed attempt
- * shows inline instead of only after a tap.
+ * The app's landing page: a calm landscape and one line of text. While the
+ * camera's hotspot can't be reached it says "Connect to the camera"; once the
+ * handshake succeeds it says "Camera connected" and waits — the live view opens
+ * only when the screen is tapped.
  */
 @Composable
 fun ConnectScreen(
@@ -70,180 +49,120 @@ fun ConnectScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var state by remember { mutableStateOf(ConnState.CHECKING) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var connected by remember { mutableStateOf(false) }
+    var switchingOff by remember { mutableStateOf(CameraSession.shutdownPending(context)) }
 
-    fun connect(navigateOnSuccess: Boolean) {
-        state = ConnState.CHECKING
-        errorMessage = null
+    fun connect() {
         scope.launch {
             // CameraSession pins this app's traffic to the camera's
             // no-internet Wi-Fi before dialing — without that, Android routes
             // us over mobile data and 192.168.42.1 is simply unreachable.
-            val result = CameraSession.connect(context)
-            if (result.isSuccess) {
-                state = ConnState.CONNECTED
-                if (navigateOnSuccess) onConnected()
-            } else {
-                state = ConnState.FAILED
-                errorMessage = result.exceptionOrNull()?.message
-            }
+            val ok = CameraSession.connect(context).isSuccess
+            connected = ok
         }
     }
 
-    // Always try to reach the camera whenever this screen is showing — the
-    // user shouldn't have to tap anything for the app to start dialing in,
-    // and coming back from the live screen should re-check rather than sit
-    // on a stale "couldn't connect". A successful auto-connect does NOT jump
-    // straight to the live screen (that would fight someone who came here to
-    // open Album); tapping "Connect to camera" is what navigates in, and by
-    // then the handshake is usually already done.
+    // Keep trying whenever this screen is showing, so joining the camera's
+    // Wi-Fi is all it takes.
     LaunchedEffect(Unit) {
         while (true) {
-            if (state != ConnState.CONNECTED) connect(navigateOnSuccess = false)
-            delay(5000)
+            switchingOff = CameraSession.shutdownPending(context)
+            if (!connected || !CameraSession.client.isConnected) {
+                connected = false
+                connect()
+            }
+            delay(4000)
         }
     }
 
     Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                // Gallery (with previously-synced previews) should still be
-                // reachable by swipe even when the camera itself isn't
-                // connected yet.
-                .pointerInput(Unit) {
-                    var dragAccumulator = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragAccumulator = 0f },
-                        onDragEnd = {
-                            if (dragAccumulator < -150f) onOpenGallery()
-                        },
-                    ) { change, dragAmount ->
-                        change.consume()
-                        dragAccumulator += dragAmount
-                    }
-                },
-        ) {
-            Text(
-                "Mi Action Camera 4K",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(top = 24.dp, start = 16.dp, end = 16.dp),
-            )
-
-            CameraHero(
-                connected = state == ConnState.CONNECTED,
-                modifier = Modifier.fillMaxWidth().height(260.dp).padding(24.dp),
-            )
-
-            HorizontalDivider()
-
-            ListItem(
-                headlineContent = {
-                    Text(
-                        when (state) {
-                            ConnState.CHECKING -> "Connecting to camera..."
-                            ConnState.CONNECTED -> "Connect to camera"
-                            ConnState.FAILED -> "Couldn't connect — tap to retry"
-                        },
-                    )
-                },
-                supportingContent = if (state == ConnState.FAILED) {
-                    {
-                        Text(
-                            "Are you on the camera's \"MiCam_\" Wi-Fi hotspot?" +
-                                (errorMessage?.let { " ($it)" } ?: ""),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else {
-                    null
-                },
-                leadingContent = {
-                    if (state == ConnState.CHECKING) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Filled.Wifi, contentDescription = null)
-                    }
-                },
-                trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
-                colors = ListItemDefaults.colors(),
-                modifier = Modifier.clickable {
-                    if (state == ConnState.CONNECTED) onConnected() else connect(navigateOnSuccess = true)
-                },
-            )
-            HorizontalDivider()
-
-            ListItem(
-                headlineContent = { Text("Album") },
-                leadingContent = { Icon(Icons.Filled.Photo, contentDescription = null) },
-                trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
-                modifier = Modifier.clickable(onClick = onOpenGallery),
-            )
-            HorizontalDivider()
-
-            Spacer(Modifier.weight(1f))
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) }) {
-                    Text("Open Wi-Fi settings")
-                }
-                TextButton(onClick = onOpenDiagnostics) {
-                    Text("Diagnostics")
-                }
-            }
-        }
+        Landing(
+            padding = padding,
+            connected = connected,
+            switchingOff = switchingOff,
+            onTitleTap = { if (connected) onConnected() else connect() },
+            onOpenWifi = { context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS)) },
+            onOpenGallery = onOpenGallery,
+            onOpenDiagnostics = onOpenDiagnostics,
+        )
     }
 }
 
-/**
- * A simple drawn illustration standing in for stock product photography (no
- * real camera imagery is bundled here) — a rounded camera body with a lens,
- * on a soft gradient backdrop, tinted by whether the camera is reachable.
- */
 @Composable
-private fun CameraHero(connected: Boolean, modifier: Modifier = Modifier) {
-    val backdropTop = if (connected) MijiaTeal.copy(alpha = 0.35f) else Color(0xFFB0BEC5)
+private fun Landing(
+    padding: PaddingValues,
+    connected: Boolean,
+    switchingOff: Boolean,
+    onTitleTap: () -> Unit,
+    onOpenWifi: () -> Unit,
+    onOpenGallery: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+) {
+    val ink = Color(0xFF3F5A69)
     Box(
-        modifier = modifier
-            .background(
-                Brush.verticalGradient(listOf(backdropTop, Color(0xFFECEFF1))),
-                RoundedCornerShape(24.dp),
-            ),
-        contentAlignment = Alignment.Center,
+        Modifier
+            .fillMaxSize()
+            // Tap anywhere to open the live view once connected (or to retry).
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onTitleTap,
+            )
+            // Swipe left for the Album, which works with or without the camera.
+            .pointerInput(Unit) {
+                var travelled = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { travelled = 0f },
+                    onDragEnd = { if (travelled < -150f) onOpenGallery() },
+                ) { change, amount ->
+                    change.consume()
+                    travelled += amount
+                }
+            },
     ) {
-        Box(
-            modifier = Modifier
-                .size(96.dp)
-                .background(Color.White, RoundedCornerShape(20.dp)),
-            contentAlignment = Alignment.Center,
+        NatureScene(Modifier.fillMaxSize())
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(
-                Icons.Filled.Videocam,
-                contentDescription = null,
-                tint = if (connected) MijiaTeal else Color(0xFF78909C),
-                modifier = Modifier.size(52.dp),
-            )
+            Spacer(Modifier.weight(0.10f))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onTitleTap,
+                    )
+                    .padding(24.dp),
+            ) {
+                Text(
+                    when {
+                        switchingOff -> "Camera is switching off"
+                        connected -> "Camera connected"
+                        else -> "Connect to the camera"
+                    },
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = ink,
+                )
+                if (connected) {
+                    Text(
+                        "Tap to open",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ink.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.weight(0.90f))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TextButton(onClick = onOpenWifi) { Text("Wi-Fi settings", color = ink) }
+                TextButton(onClick = onOpenGallery) { Text("Album", color = ink) }
+                TextButton(onClick = onOpenDiagnostics) { Text("Diagnostics", color = ink) }
+            }
         }
-        // A small "lens ring" accent, echoing the camera's circular lens.
-        Canvas(modifier = Modifier.size(96.dp)) {
-            drawCircle(
-                color = (if (connected) MijiaTeal else Color(0xFF78909C)).copy(alpha = 0.25f),
-                radius = size.minDimension / 2,
-                center = Offset(size.width / 2, size.height / 2),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 40.dp, end = 24.dp)
-                .size(10.dp)
-                .background(if (connected) MijiaTeal else Color(0xFFB0BEC5), CircleShape),
-        )
     }
 }

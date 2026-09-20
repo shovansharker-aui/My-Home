@@ -59,6 +59,45 @@ object CameraSession {
 
     private var prefetchJob: Job? = null
 
+    private const val PREFS = "camera_session"
+    private const val KEY_RESTORE_AUTO_OFF = "restore_auto_power_off"
+    private const val KEY_SHUTDOWN_UNTIL = "shutdown_until"
+    private const val SHUTDOWN_WINDOW_MS = 4 * 60_000L
+
+    /** True while a requested switch-off is running its course; reconnecting now would keep the camera awake. */
+    fun shutdownPending(context: Context): Boolean =
+        System.currentTimeMillis() < context.applicationContext
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_SHUTDOWN_UNTIL, 0L)
+
+    /**
+     * The camera has no remote power-off command we could find, so this sets
+     * its own auto power-off to the shortest value (2 minutes), lets go of the
+     * connection, and stops reconnecting until it has had time to switch off.
+     * The user's previous auto power-off value is put back the next time a
+     * session starts.
+     */
+    suspend fun scheduleShutdown(context: Context): Result<Unit> {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val current = _settings.value["auto_power_off"]
+        if (current != null && current != "2min" && !prefs.contains(KEY_RESTORE_AUTO_OFF)) {
+            prefs.edit().putString(KEY_RESTORE_AUTO_OFF, current).apply()
+        }
+        val result = writeSetting("auto_power_off", "2min")
+        if (result.isSuccess) {
+            prefs.edit().putLong(KEY_SHUTDOWN_UNTIL, System.currentTimeMillis() + SHUTDOWN_WINDOW_MS).apply()
+            disconnect()
+        }
+        return result
+    }
+
+    private suspend fun restoreAutoPowerOff(context: Context) {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val saved = prefs.getString(KEY_RESTORE_AUTO_OFF, null) ?: return
+        if (writeSetting("auto_power_off", saved).isSuccess) {
+            prefs.edit().remove(KEY_RESTORE_AUTO_OFF).remove(KEY_SHUTDOWN_UNTIL).apply()
+        }
+    }
+
     /**
      * Pins the process to the camera's Wi-Fi *and then* opens the session.
      * Binding lives here rather than in one screen so every caller —
@@ -67,12 +106,13 @@ object CameraSession {
      * happens in the field.
      */
     suspend fun connect(context: Context): Result<Unit> {
+        if (shutdownPending(context)) return Result.failure(IllegalStateException("Camera is switching off"))
         val fresh = lock.withLock {
             NetworkBinder.ensureBound(context)
             if (client.isConnected) return@withLock Result.success(false)
             client.connectAndStartSession().map { true }
         }
-        if (fresh.getOrNull() == true) onSessionStarted()
+        if (fresh.getOrNull() == true) onSessionStarted(context)
         return fresh.map { }
     }
 
@@ -96,11 +136,24 @@ object CameraSession {
         client.disconnect()
     }
 
-    private fun onSessionStarted() {
+    private fun onSessionStarted(context: Context) {
         prefetchJob?.cancel()
         prefetchJob = scope.launch {
-            refreshSettings()
+            ensureViewfinder()
+            restoreAutoPowerOff(context)
             prefetchOptions(_currentMode.value)
+        }
+    }
+
+    /** Makes sure the camera is streaming (app_status "vf"); an idle camera gives the live view nothing to show. */
+    suspend fun ensureViewfinder() {
+        val status = refreshSettings()?.get("app_status")
+        android.util.Log.d("CameraSession", "ensureViewfinder: app_status=$status")
+        // Only an idle camera needs the feed started; sending it mid-recording
+        // makes the camera stop answering on the control port.
+        if (status == "idle") {
+            val r = client.startViewfinder()
+            android.util.Log.d("CameraSession", "startViewfinder -> ${r.getOrNull() ?: r.exceptionOrNull()}")
         }
     }
 
