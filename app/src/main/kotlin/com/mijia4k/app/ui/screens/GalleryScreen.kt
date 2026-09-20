@@ -210,22 +210,13 @@ fun GalleryScreen(onBack: () -> Unit) {
         scope.launch {
             var ok = 0
             var failed = 0
-            // Connect the socket — delete goes through TCP 7878, not HTTP.
-            if (!CameraSession.client.isConnected) {
-                val conn = CameraSession.connect(context)
-                if (conn.isFailure) {
-                    deleting = false
-                    snackbarHostState.showSnackbar("Connect to the camera first to delete files")
-                    return@launch
-                }
-            }
             for (item in toDelete) {
                 // Delete the original + proxy (.THM) + RAW (.DNG).
                 val files = (item.downloadable +
                     listOfNotNull(item.playbackFile?.takeIf { it != item.mediaFile }))
                     .distinctBy { it.path }
                 for (file in files) {
-                    val result = CameraSession.client.deleteFile(file.path)
+                    val result = CameraSession.deleteFile(context, file.path)
                     if (result.isSuccess) ok++ else {
                         android.util.Log.w("Gallery", "Delete failed for ${file.path}: ${result.exceptionOrNull()}")
                         failed++

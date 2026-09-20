@@ -2,7 +2,6 @@ package com.mijia4k.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
@@ -107,11 +105,15 @@ fun ModeSettingsBar(
     onOpen: (SettingField) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        for (field in fields) {
+        for (rowFields in fields.chunked(5)) Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+        for (field in rowFields) {
             val value = settings[field.key]
             val on = field.isToggle && isToggleOn(field, value)
             Column(
@@ -141,6 +143,7 @@ fun ModeSettingsBar(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
+        }
         }
     }
 }

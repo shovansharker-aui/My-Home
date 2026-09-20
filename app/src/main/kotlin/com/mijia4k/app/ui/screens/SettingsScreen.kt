@@ -67,7 +67,6 @@ import java.util.Locale
 
 /** Which screen inside Settings is showing — the stock app uses full screens, not dialogs. */
 private sealed interface SettingsPage {
-    data object Hub : SettingsPage
     data object Camera : SettingsPage
     data object WifiSettings : SettingsPage
     data object SdCard : SettingsPage
@@ -78,11 +77,9 @@ private sealed interface SettingsPage {
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val modeValue by CameraSession.currentMode.collectAsState()
-    val fields = remember(modeValue) { fieldsFor(modeValue) }
 
     val values by CameraSession.settings.collectAsState()
-    var page by remember { mutableStateOf<SettingsPage>(SettingsPage.Hub) }
+    var page by remember { mutableStateOf<SettingsPage>(SettingsPage.Camera) }
     var lastWriteStatus by remember { mutableStateOf<String?>(null) }
 
     // Everything shown here is already in memory; this just freshens it.
@@ -105,12 +102,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
     // The toolbar arrow walks back one level at a time; the system back
     // gesture used to skip all of that and drop the whole Settings screen
     // from any sub-page.
-    BackHandler(enabled = page != SettingsPage.Hub) {
-        page = if (page == SettingsPage.Camera) SettingsPage.Hub else SettingsPage.Camera
+    BackHandler(enabled = page != SettingsPage.Camera) {
+        page = SettingsPage.Camera
     }
 
     val title = when (val p = page) {
-        SettingsPage.Hub -> "Settings"
         SettingsPage.Camera -> "Camera Settings"
         SettingsPage.WifiSettings -> "Wi-Fi settings"
         SettingsPage.SdCard -> "SD card"
@@ -125,8 +121,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                     IconButton(
                         onClick = {
                             page = when (page) {
-                                SettingsPage.Hub -> return@IconButton onBack()
-                                SettingsPage.Camera -> SettingsPage.Hub
+                                SettingsPage.Camera -> return@IconButton onBack()
                                 else -> SettingsPage.Camera
                             }
                         },
@@ -145,6 +140,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 onToggle = { field, checked -> writeSetting(field, toggleValue(field, checked), closePicker = false) },
                 onOpenWifi = { page = SettingsPage.WifiSettings },
                 onOpenSdCard = { page = SettingsPage.SdCard },
+                onOpenDiagnostics = onOpenDiagnostics,
             )
 
             SettingsPage.WifiSettings -> WifiSettingsPage(
@@ -172,46 +168,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenDiagnostics: () -> Unit) {
                 onPick = { writeSetting(p.field, it) },
             )
 
-            SettingsPage.Hub -> LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-                item {
-                    ListItem(
-                        headlineContent = { Text("Camera Settings") },
-                        trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
-                        modifier = Modifier.clickable { page = SettingsPage.Camera },
-                    )
-                    HorizontalDivider(thickness = 8.dp)
-                }
-
-                item {
-                    SectionHeader("${MODE_LABELS[modeValue] ?: modeValue} Parameter Settings")
-                }
-                items(fields) { field ->
-                    SettingRow(
-                        field,
-                        values[field.key],
-                        onTap = { page = SettingsPage.Picker(field) },
-                        onToggle = { checked -> writeSetting(field, toggleValue(field, checked), closePicker = false) },
-                    )
-                }
-
-                lastWriteStatus?.let { status ->
-                    item {
-                        Text(
-                            status,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        )
-                    }
-                }
-
-                item {
-                    ListItem(
-                        headlineContent = { Text("Diagnostics (advanced/debug)") },
-                        trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
-                        modifier = Modifier.clickable(onClick = onOpenDiagnostics).padding(top = 24.dp),
-                    )
-                }
-            }
         }
     }
 }
@@ -272,6 +228,7 @@ private fun CameraSettingsList(
     onToggle: (SettingField, Boolean) -> Unit,
     onOpenWifi: () -> Unit,
     onOpenSdCard: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
 ) {
     var deviceInfo by remember { mutableStateOf<JSONObject?>(null) }
     var deviceInfoError by remember { mutableStateOf<String?>(null) }
@@ -321,6 +278,11 @@ private fun CameraSettingsList(
                 modifier = Modifier.clickable { showRestoreConfirm = true },
             )
             HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Diagnostics (advanced/debug)") },
+                trailingContent = { Icon(Icons.Filled.ChevronRight, contentDescription = null) },
+                modifier = Modifier.clickable(onClick = onOpenDiagnostics),
+            )
         }
 
         deviceInfoError?.let { error ->

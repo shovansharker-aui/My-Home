@@ -76,6 +76,22 @@ object CameraSession {
         return fresh.map { }
     }
 
+    /**
+     * Deletes one file, reconnecting if the control socket turns out to be
+     * dead. The socket can go stale while another screen (the Album) is open
+     * and only reveals it on the next command, which would otherwise fail the
+     * whole batch.
+     */
+    suspend fun deleteFile(context: Context, path: String): Result<Unit> {
+        if (!client.isConnected) connect(context)
+        var result = client.deleteFile(path)
+        if (result.isFailure && result.exceptionOrNull() !is CameraCommandException) {
+            connect(context)
+            result = client.deleteFile(path)
+        }
+        return result.map { }
+    }
+
     suspend fun disconnect() = lock.withLock {
         client.disconnect()
     }

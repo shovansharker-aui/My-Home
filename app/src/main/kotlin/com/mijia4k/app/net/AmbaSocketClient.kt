@@ -182,28 +182,17 @@ class AmbaSocketClient(
     suspend fun setCameraMode(mode: String): Result<JSONObject> = setSetting("mode_setting", mode)
 
     /**
-     * Permanently removes a file from the camera's SD card.
-     * [path] is the HTTP server path, e.g. `/DCIM/100MEDIA/VID_xxx.MP4`.
-     * The socket delete command needs `type="del_file"`. The correct RTOS path
-     * is unknown ahead of time, so we try the most common formats in order and
-     * return the first success — or the last failure if all fail.
+     * Permanently removes a file from the camera's SD card. [path] is the HTTP
+     * path (e.g. `/DCIM/100MEDIA/VID_xxx.MP4`); the control socket wants the
+     * card's real mount point in front of it (`/tmp/SD0`). rval -26 means the
+     * file isn't there — the camera removes a photo's RAW/proxy siblings along
+     * with it, so by the time the second file is asked for it's already gone,
+     * and that counts as done rather than as a failure.
      */
     suspend fun deleteFile(path: String): Result<JSONObject> {
-        val candidates = listOf(
-            path,                                           // /DCIM/100MEDIA/…
-            path.trimStart('/'),                            // DCIM/100MEDIA/…
-            "${CameraEndpoints.SDCARD_MOUNT}$path",         // /tmp/fuse_d/DCIM/…
-            "/tmp/SD0$path",                                // /tmp/SD0/DCIM/…
-        )
-        var last: Result<JSONObject> = Result.failure(IllegalStateException("no candidates"))
-        for (candidate in candidates) {
-            Log.d(TAG, "deleteFile: trying param=$candidate")
-            val r = command(MsgId.DELETE_FILE, type = "del_file", param = candidate)
-            Log.d(TAG, "deleteFile: result=${r.getOrNull() ?: r.exceptionOrNull()}")
-            if (r.isSuccess) return r
-            last = r
-        }
-        return last
+        val r = command(MsgId.DELETE_FILE, param = "${CameraEndpoints.SDCARD_MOUNT}$path")
+        val gone = (r.exceptionOrNull() as? CameraCommandException)?.rval == FILE_NOT_FOUND_RVAL
+        return if (gone) Result.success(JSONObject()) else r
     }
 
     private suspend fun command(
@@ -339,6 +328,7 @@ class AmbaSocketClient(
         const val CONNECT_TIMEOUT_MS = 4000
         const val READ_TIMEOUT_MS = 5000
         const val MIN_COMMAND_GAP_MS = 150L
+        const val FILE_NOT_FOUND_RVAL = -26
 
         /** Guards against spinning forever if the camera only ever pushes notifications. */
         const val MAX_SKIPPED_MESSAGES = 8
@@ -370,9 +360,9 @@ object CameraEndpoints {
     const val HTTP_PORT = 80
     const val RTSP_PORT = 554
     const val RTSP_URL = "rtsp://$HOST/live"
-    // HTTP paths start at /DCIM/… but the RTOS filesystem has the SD card
-    // mounted at /tmp/fuse_d/ — used to translate paths for delete commands.
-    const val SDCARD_MOUNT = "/tmp/fuse_d"
+    // HTTP paths start at /DCIM/… but the camera's filesystem has the SD card
+    // mounted at /tmp/SD0 — used to translate paths for delete commands.
+    const val SDCARD_MOUNT = "/tmp/SD0"
 }
 
 /**

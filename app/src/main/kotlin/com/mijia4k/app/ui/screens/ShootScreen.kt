@@ -2,7 +2,7 @@ package com.mijia4k.app.ui.screens
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timelapse
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Videocam
+import android.util.Log
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -135,17 +137,13 @@ fun ShootScreen(
     var busy by remember { mutableStateOf(false) }
     var recordStartedAt by remember { mutableStateOf(0L) }
     var elapsedSeconds by remember { mutableStateOf(0) }
-    var status by remember { mutableStateOf<String?>(null) }
+    var capturing by remember { mutableStateOf(false) }
     val sessionMode by CameraSession.currentMode.collectAsState()
     val currentMode = CAMERA_MODES.firstOrNull { it.value == sessionMode } ?: DEFAULT_MODE
     val sessionSettings by CameraSession.settings.collectAsState()
 
     // A mode change, from a tap here or from the camera itself, ends whatever "recording" state was showing.
     LaunchedEffect(sessionMode) { recording = false }
-    // What the camera itself last reported for mode_setting, whether or not
-    // it matches one of our values — shown so a wrong guess is visible
-    // instead of silently invisible.
-    var cameraReportedMode by remember { mutableStateOf<String?>(null) }
     var showModeDialog by remember { mutableStateOf(false) }
     var openField by remember { mutableStateOf<SettingField?>(null) }
     var showGrid by remember { mutableStateOf(false) }
@@ -190,7 +188,6 @@ fun ShootScreen(
                 recording = false
             } else {
                 CameraSession.refreshSettings()?.let { map ->
-                    cameraReportedMode = map["mode_setting"]
                     // Reflect the camera's actual state rather than assuming
                     // it starts enabled — the icon used to be able to lie.
                     map["distortion_correction"]?.let { distortionCorrection = it.equals("on", true) }
@@ -219,15 +216,6 @@ fun ShootScreen(
             delay(500)
         }
         elapsedSeconds = 0
-    }
-
-    // Clear transient status text so a stale "sent — confirming..." doesn't
-    // sit on screen forever.
-    LaunchedEffect(status) {
-        if (status != null) {
-            delay(4000)
-            status = null
-        }
     }
 
     val player = remember {
@@ -270,15 +258,15 @@ fun ShootScreen(
     }
 
     /** Runs a camera command, reporting what the *camera* said rather than just that bytes were sent. */
-    fun runCommand(label: String, onSuccess: () -> Unit = {}, block: suspend () -> Result<*>) {
+    fun runCommand(label: String, spin: Boolean = false, onSuccess: () -> Unit = {}, block: suspend () -> Result<*>) {
         if (busy) return
         busy = true
+        if (spin) capturing = true
         scope.launch {
             val result = block()
-            status = result.fold(
-                onSuccess = { onSuccess(); "$label OK" },
-                onFailure = { "$label failed: ${it.message}" },
-            )
+            result.onSuccess { onSuccess() }
+            result.onFailure { Log.w("ShootScreen", "$label failed", it) }
+            capturing = false
             busy = false
         }
     }
@@ -310,13 +298,20 @@ fun ShootScreen(
                 // Swipe right-to-left anywhere on this screen to jump into
                 // the full Album, like flicking to the next screen.
                 .pointerInput(Unit) {
-                    var dragAccumulator = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragAccumulator = 0f },
-                        onDragEnd = { if (dragAccumulator < -150f) onOpenGallery() },
-                    ) { change, dragAmount ->
+                    var dx = 0f
+                    var dy = 0f
+                    detectDragGestures(
+                        onDragStart = { dx = 0f; dy = 0f },
+                        onDragEnd = {
+                            when {
+                                dy > 160f && dy > kotlin.math.abs(dx) -> onOpenSettings()
+                                dx < -150f && kotlin.math.abs(dx) > kotlin.math.abs(dy) -> onOpenGallery()
+                            }
+                        },
+                    ) { change, amount ->
                         change.consume()
-                        dragAccumulator += dragAmount
+                        dx += amount.x
+                        dy += amount.y
                     }
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -393,45 +388,6 @@ fun ShootScreen(
             }
 
             Row(
-                modifier = Modifier.padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50))
-                        .clickable { showModeDialog = true }
-                        .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                ) {
-                    Icon(currentMode.icon, contentDescription = null, tint = MijiaTeal, modifier = Modifier.size(20.dp))
-                    Text(
-                        currentMode.label,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                    Icon(Icons.Filled.ArrowDropDown, contentDescription = "Change mode")
-                }
-                if (cameraReportedMode != null && CAMERA_MODES.none { it.value == cameraReportedMode }) {
-                    Text(
-                        " (camera reports: \"$cameraReportedMode\")",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-
-            if (!connected) {
-                Text(
-                    "Not connected to the camera — reconnecting...",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(8.dp),
-                )
-            }
-            status?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
-            }
-
-            Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp, horizontal = 32.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -459,12 +415,13 @@ fun ShootScreen(
                         // running timer) over a camera that never started.
                         if (currentMode.isRecording) {
                             if (recording) {
-                                runCommand("Stop recording", onSuccess = { recording = false }) {
+                                runCommand("Stop recording", spin = true, onSuccess = { recording = false }) {
                                     CameraSession.client.stopRecording()
                                 }
                             } else {
                                 runCommand(
                                     "Start recording",
+                                    spin = true,
                                     onSuccess = {
                                         recordStartedAt = System.currentTimeMillis()
                                         recording = true
@@ -472,7 +429,7 @@ fun ShootScreen(
                                 ) { CameraSession.client.startRecording() }
                             }
                         } else {
-                            runCommand("Shutter") { CameraSession.client.takePhoto() }
+                            runCommand("Shutter", spin = true) { CameraSession.client.takePhoto() }
                         }
                     },
                     modifier = Modifier
@@ -482,13 +439,16 @@ fun ShootScreen(
                     if (recording) {
                         Icon(Icons.Filled.Stop, contentDescription = "Stop", tint = Color.White, modifier = Modifier.size(28.dp))
                     }
+                    if (capturing) {
+                        CircularProgressIndicator(color = Color.White, strokeWidth = 4.dp, modifier = Modifier.size(60.dp))
+                    }
                 }
 
                 IconButton(
-                    onClick = onOpenSettings,
+                    onClick = { showModeDialog = true },
                     modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
                 ) {
-                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    Icon(currentMode.icon, contentDescription = "Change mode (${currentMode.label})", tint = MijiaTeal)
                 }
             }
 
@@ -499,9 +459,7 @@ fun ShootScreen(
                 enabled = connected,
                 onToggle = { field, next ->
                     scope.launch {
-                        CameraSession.writeSetting(field.key, toggleValue(field, next)).onFailure {
-                            status = "Couldn't set ${field.label}: ${it.message}"
-                        }
+                        CameraSession.writeSetting(field.key, toggleValue(field, next)).onFailure { Log.w("ShootScreen", "set ${field.key} failed", it) }
                     }
                 },
                 onOpen = { openField = it },
@@ -516,9 +474,7 @@ fun ShootScreen(
             onPick = { value ->
                 openField = null
                 scope.launch {
-                    CameraSession.writeSetting(field.key, value).onFailure {
-                        status = "Couldn't set ${field.label}: ${it.message}"
-                    }
+                    CameraSession.writeSetting(field.key, value).onFailure { Log.w("ShootScreen", "set ${field.key} failed", it) }
                 }
             },
             onDismiss = { openField = null },
@@ -547,9 +503,7 @@ fun ShootScreen(
                                         if (mode.value != sessionMode) {
                                             recording = false
                                             scope.launch {
-                                                CameraSession.switchMode(mode.value).onFailure {
-                                                    status = "Set mode ${mode.label} failed: ${it.message}"
-                                                }
+                                                CameraSession.switchMode(mode.value).onFailure { Log.w("ShootScreen", "mode switch failed", it) }
                                             }
                                         }
                                     })
