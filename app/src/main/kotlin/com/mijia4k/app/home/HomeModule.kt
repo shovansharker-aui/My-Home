@@ -4,10 +4,11 @@ import androidx.annotation.DrawableRes
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import com.mijia4k.app.modules.mijia.MijiaCameraModule
+import com.mijia4k.app.modules.led.LedModule
 import com.mijia4k.app.modules.printer.PrinterModule
 
 /**
- * One self-contained app living inside My Home (the camera today; a light,
+ * One self-contained app living inside Ahshan's Home (the camera today; a light,
  * a thermostat, a sensor tomorrow). A module describes its tile on the home
  * screen and registers its own navigation graph; the shell knows nothing else
  * about it, so adding a module means writing one of these and listing it in
@@ -34,5 +35,6 @@ object ModuleRegistry {
     val modules: List<HomeModule> = listOf(
         MijiaCameraModule,
         PrinterModule,
+        LedModule,
     )
 }

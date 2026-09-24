@@ -40,18 +40,6 @@ object PrintRenderer {
 
     enum class ListStyle(val label: String) { BULLETS("Bullets"), CHECKS("Checkboxes"), NUMBERS("Numbers") }
 
-    // ---- text -------------------------------------------------------------
-
-    fun text(text: String, size: TextSize, bold: Boolean, align: Align): Bitmap {
-        val paint = paint(size.px, bold)
-        val layout = layout(text.ifBlank { " " }, paint, W - 2 * PAD, align.layout)
-        val bmp = blank(layout.height + 2 * PAD)
-        val canvas = Canvas(bmp)
-        canvas.translate(PAD.toFloat(), PAD.toFloat())
-        layout.draw(canvas)
-        return binarize(bmp)
-    }
-
     // ---- notes and lists --------------------------------------------------
 
     fun note(title: String, items: List<String>, style: ListStyle, showDate: Boolean): Bitmap {
@@ -146,39 +134,40 @@ object PrintRenderer {
     // ---- photos -----------------------------------------------------------
 
     /** Scales to the print width and turns a picture into black and white, either plain or dithered. */
-    fun photo(source: Bitmap, brightness: Float, contrast: Float, dither: Boolean): Bitmap {
-        val h = maxOf(1, (source.height * W.toFloat() / source.width).toInt())
-        val scaled = Bitmap.createScaledBitmap(source, W, h, true)
-        val px = IntArray(W * h)
-        scaled.getPixels(px, 0, W, 0, 0, W, h)
-        val gray = FloatArray(W * h) { i ->
+    fun photo(source: Bitmap, brightness: Float, contrast: Float, dither: Boolean, targetWidth: Int = W): Bitmap {
+        val tw = targetWidth.coerceIn(8, W)
+        val h = maxOf(1, (source.height * tw.toFloat() / source.width).toInt())
+        val scaled = Bitmap.createScaledBitmap(source, tw, h, true)
+        val px = IntArray(tw * h)
+        scaled.getPixels(px, 0, tw, 0, 0, tw, h)
+        val gray = FloatArray(tw * h) { i ->
             val p = px[i]
             val alpha = (p ushr 24) / 255f
             val lum = 0.299f * (p shr 16 and 0xFF) + 0.587f * (p shr 8 and 0xFF) + 0.114f * (p and 0xFF)
             val onWhite = lum * alpha + 255f * (1 - alpha)
             ((onWhite - 128f) * contrast + 128f + brightness * 255f).coerceIn(0f, 255f)
         }
-        val out = IntArray(W * h)
+        val out = IntArray(tw * h)
         if (dither) {
             // Floyd–Steinberg: push each pixel's rounding error onto its neighbours.
-            for (y in 0 until h) for (x in 0 until W) {
-                val i = y * W + x
+            for (y in 0 until h) for (x in 0 until tw) {
+                val i = y * tw + x
                 val old = gray[i]
                 val new = if (old < 128f) 0f else 255f
                 out[i] = if (new == 0f) Color.BLACK else Color.WHITE
                 val err = old - new
-                if (x + 1 < W) gray[i + 1] += err * 7f / 16f
+                if (x + 1 < tw) gray[i + 1] += err * 7f / 16f
                 if (y + 1 < h) {
-                    if (x > 0) gray[i + W - 1] += err * 3f / 16f
-                    gray[i + W] += err * 5f / 16f
-                    if (x + 1 < W) gray[i + W + 1] += err * 1f / 16f
+                    if (x > 0) gray[i + tw - 1] += err * 3f / 16f
+                    gray[i + tw] += err * 5f / 16f
+                    if (x + 1 < tw) gray[i + tw + 1] += err * 1f / 16f
                 }
             }
         } else {
             for (i in gray.indices) out[i] = if (gray[i] < 128f) Color.BLACK else Color.WHITE
         }
-        val bmp = Bitmap.createBitmap(W, h, Bitmap.Config.ARGB_8888)
-        bmp.setPixels(out, 0, W, 0, 0, W, h)
+        val bmp = Bitmap.createBitmap(tw, h, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(out, 0, tw, 0, 0, tw, h)
         return bmp
     }
 

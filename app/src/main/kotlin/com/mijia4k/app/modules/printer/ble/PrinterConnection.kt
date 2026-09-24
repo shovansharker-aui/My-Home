@@ -20,6 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,6 +55,7 @@ class PrinterConnection(private val context: Context) {
     data class Found(val name: String, val address: String, val rssi: Int)
 
     private val adapter: BluetoothAdapter? = context.getSystemService(BluetoothManager::class.java)?.adapter
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -63,6 +65,11 @@ class PrinterConnection(private val context: Context) {
 
     private val _status = MutableStateFlow<CatProtocol.Status?>(null)
     val status: StateFlow<CatProtocol.Status?> = _status.asStateFlow()
+
+    private val _battery = MutableStateFlow<Int?>(null)
+
+    /** Charge in percent, when the printer reports one. */
+    val battery: StateFlow<Int?> = _battery.asStateFlow()
 
     private val _progress = MutableStateFlow<Float?>(null)
 
@@ -155,6 +162,7 @@ class PrinterConnection(private val context: Context) {
         paused = false
         rx = ByteArray(0)
         _status.value = null
+        _battery.value = null
     }
 
     private val callback = object : BluetoothGattCallback() {
@@ -248,6 +256,10 @@ class PrinterConnection(private val context: Context) {
 
     private fun becomeReady() {
         _state.value = State.Ready(deviceName, deviceAddress)
+        scope.launch {
+            delay(600)
+            runCatching { writeMutex.withLock { writeChunk(CatProtocol.infoRequest()) } }
+        }
         pending?.complete(Result.success(Unit))
         pending = null
     }
@@ -278,6 +290,7 @@ class PrinterConnection(private val context: Context) {
         when (cmd) {
             CatProtocol.CMD_FLOW -> paused = data.isNotEmpty() && data[0].toInt() != 0
             CatProtocol.CMD_STATUS -> if (data.isNotEmpty()) _status.value = CatProtocol.Status(data[0].toInt() and 0xFF)
+            CatProtocol.CMD_INFO -> if (data.isNotEmpty()) (data[0].toInt() and 0xFF).takeIf { it in 0..100 }?.let { _battery.value = it }
         }
     }
 
@@ -310,6 +323,11 @@ class PrinterConnection(private val context: Context) {
         }
         if (!accepted) throw IOException("The printer stopped accepting data")
         withTimeout(4_000) { writeAck.receive() }
+    }
+
+    /** Asks the printer for its charge; the answer lands in [battery]. */
+    suspend fun refreshBattery() {
+        runCatching { writeMutex.withLock { writeChunk(CatProtocol.infoRequest()) } }
     }
 
     /** Asks the printer for its status; the answer lands in [status]. */

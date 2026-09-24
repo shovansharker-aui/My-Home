@@ -4,14 +4,14 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#FF000000"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="4"
-        android:strokeLineJoin="round"
-        android:pathData="M54,25L86,55L22,55Z" />
-    <path
-        android:fillColor="#FF000000"
-        android:fillType="evenOdd"
-        android:pathData="M34,55h40a4,4 0,0 1,4 4v20a4,4 0,0 1,-4 4h-40a4,4 0,0 1,-4 -4v-20a4,4 0,0 1,4 -4zM43,61h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2zM59,61h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2zM43,72h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2zM59,72h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2z" />
+    <!-- Four rounded tiles -->
+    <path android:fillColor="#FF000000" android:fillAlpha="0.4" android:pathData="M35,30h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5zM59,30h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5zM35,54h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5zM59,54h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5z" />
+    <!-- Lens -->
+    <path android:fillColor="#FF000000" android:pathData="M42,42m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0" />
+    <!-- Printer -->
+    <path android:fillColor="#FF000000" android:pathData="M61.5,38h13a2,2 0,0 1,2 2v6a2,2 0,0 1,-2 2h-13a2,2 0,0 1,-2 -2v-6a2,2 0,0 1,2 -2zM64,33h8v4h-8zM63.5,47h9v3h-9z" />
+    <!-- Bulb -->
+    <path android:fillColor="#FF000000" android:pathData="M42,64m-6.2,0a6.2,6.2 0,1 1,12.4 0a6.2,6.2 0,1 1,-12.4 0M39.2,69.5h5.6v4.5h-5.6z" />
+    <!-- Home -->
+    <path android:fillColor="#FF000000" android:pathData="M66,60L74,67.2L58,67.2ZM60.5,67h11v8h-11z" />
 </vector>

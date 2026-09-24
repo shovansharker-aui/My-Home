@@ -50,31 +50,6 @@ private fun SwitchRow(label: String, checked: Boolean, onChecked: (Boolean) -> U
     }
 }
 
-// ---- plain text ---------------------------------------------------------------
-
-@Composable
-fun TextTool(onBack: () -> Unit, onOpenScan: () -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
-    var size by rememberSaveable { mutableStateOf(TextSize.MEDIUM) }
-    var align by rememberSaveable { mutableStateOf(Align.LEFT) }
-    var bold by rememberSaveable { mutableStateOf(false) }
-    val bitmap = remember(text, size, align, bold) { if (text.isBlank()) null else PrintRenderer.text(text, size, bold, align) }
-
-    PrintTool("Print text", onBack, onOpenScan, bitmap, "Type something to see it here") {
-        OutlinedTextField(
-            value = text,
-            onValueChange = { text = it },
-            label = { Text("Text") },
-            minLines = 3,
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        )
-        ChoiceRow("Size", TextSize.entries, size, { it.label }) { size = it }
-        ChoiceRow("Alignment", Align.entries, align, { it.label }) { align = it }
-        SwitchRow("Bold", bold) { bold = it }
-    }
-}
-
 // ---- notes and lists ----------------------------------------------------------
 
 @Composable
@@ -253,7 +228,7 @@ fun PhotoTool(onBack: () -> Unit, onOpenScan: () -> Unit) {
 }
 
 /** Reads a picture at a size the printer can use, applying the camera's rotation tag. */
-private fun decodeScaled(context: Context, uri: Uri): Bitmap? = runCatching {
+internal fun decodeScaled(context: Context, uri: Uri): Bitmap? = runCatching {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }

@@ -1,29 +1,70 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Soft ground shadow -->
-    <path android:fillColor="#26000000" android:pathData="M54,83m-26,0a26,3.2 0,1 1,52 0a26,3.2 0,1 1,-52 0" />
+    <!-- Soft card behind the four module tiles, like the cards on the home screen -->
+    <path android:fillColor="#F2FFFFFF" android:pathData="M31,24h46a8,8 0,0 1,8 8v44a8,8 0,0 1,-8 8h-46a8,8 0,0 1,-8 -8v-44a8,8 0,0 1,8 -8z" />
 
-    <!-- House body -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M34,55h40a4,4 0,0 1,4 4v20a4,4 0,0 1,-4 4h-40a4,4 0,0 1,-4 -4v-20a4,4 0,0 1,4 -4z" />
+    <!-- Tile: camera -->
+    <path android:pathData="M35,30h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="0" android:startY="30" android:endX="0" android:endY="54" android:type="linear">
+                <item android:color="#FFFBE6D6" android:offset="0.0" />
+                <item android:color="#FFC3E0E6" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Tile: printer -->
+    <path android:pathData="M59,30h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="0" android:startY="30" android:endX="0" android:endY="54" android:type="linear">
+                <item android:color="#FFFBE6D6" android:offset="0.0" />
+                <item android:color="#FFC3E0E6" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Tile: light -->
+    <path android:pathData="M35,54h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="0" android:startY="54" android:endX="0" android:endY="78" android:type="linear">
+                <item android:color="#FFFBE6D6" android:offset="0.0" />
+                <item android:color="#FFC3E0E6" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Tile: home -->
+    <path android:pathData="M59,54h14a5,5 0,0 1,5 5v14a5,5 0,0 1,-5 5h-14a5,5 0,0 1,-5 -5v-14a5,5 0,0 1,5 -5z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="0" android:startY="54" android:endX="0" android:endY="78" android:type="linear">
+                <item android:color="#FFFBE6D6" android:offset="0.0" />
+                <item android:color="#FFC3E0E6" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
 
-    <!-- Roof -->
-    <path
-        android:fillColor="#FF00BFA5"
-        android:strokeColor="#FF00BFA5"
-        android:strokeWidth="4"
-        android:strokeLineJoin="round"
-        android:pathData="M54,25L86,55L22,55Z" />
+    <!-- Camera lens -->
+    <path android:fillColor="#FF3F5A69" android:pathData="M42,42m-8,0a8,8 0,1 1,16 0a8,8 0,1 1,-16 0" />
+    <path android:fillColor="#FF7FB8E8" android:pathData="M42,42m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M40.3,40.3m-1.5,0a1.5,1.5 0,1 1,3 0a1.5,1.5 0,1 1,-3 0" />
+    <path android:fillColor="#FFF44336" android:pathData="M48,34.5m-1.7,0a1.7,1.7 0,1 1,3.4 0a1.7,1.7 0,1 1,-3.4 0" />
 
-    <!-- Four module tiles inside -->
-    <path android:fillColor="#FF00BFA5" android:pathData="M43,61h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2z" />
-    <path android:fillColor="#FFFFB88C" android:pathData="M59,61h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2z" />
-    <path android:fillColor="#FF7FB8E8" android:pathData="M43,72h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2z" />
-    <path android:fillColor="#FF8FCB9B" android:pathData="M59,72h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2z" />
+    <!-- Printer -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M64,33h8v6h-8z" />
+    <path android:fillColor="#FF3F5A69" android:pathData="M61.5,38h13a2,2 0,0 1,2 2v6a2,2 0,0 1,-2 2h-13a2,2 0,0 1,-2 -2v-6a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M63.5,47h9v3h-9z" />
+    <path android:fillColor="#FF00BFA5" android:pathData="M73.2,42m-1.2,0a1.2,1.2 0,1 1,2.4 0a1.2,1.2 0,1 1,-2.4 0" />
+
+    <!-- Light bulb -->
+    <path android:fillColor="#FFFFC94D" android:pathData="M42,64m-6.2,0a6.2,6.2 0,1 1,12.4 0a6.2,6.2 0,1 1,-12.4 0" />
+    <path android:fillColor="#FF3F5A69" android:pathData="M39.2,69.5h5.6v2.2h-5.6z" />
+    <path android:fillColor="#FF00BFA5" android:pathData="M40.2,72.6h3.6v1.4h-3.6z" />
+
+    <!-- Home -->
+    <path android:fillColor="#FF00BFA5" android:pathData="M66,60L74,67.2L58,67.2Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M60.5,67h11v8h-11z" />
+    <path android:fillColor="#FF3F5A69" android:pathData="M64.7,70.5h2.6v4.5h-2.6z" />
 </vector>

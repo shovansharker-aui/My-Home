@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,7 +34,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -86,18 +89,24 @@ fun PrinterHomeScreen(
     val connection = remember { PrinterHub.connection(context) }
     val state by connection.state.collectAsState()
     val status by connection.status.collectAsState()
-    var density by remember { mutableStateOf(PrinterHub.density(context)) }
+    val battery by connection.battery.collectAsState()
     val ready = state is PrinterConnection.State.Ready
 
     // Pick up where the last session left off.
     LaunchedEffect(Unit) {
-        val last = PrinterHub.lastAddress(context)
-        val idle = state is PrinterConnection.State.Idle || state is PrinterConnection.State.Failed
-        if (last != null && idle && hasBluetoothPermissions(context) && connection.bluetoothEnabled) connection.connect(last)
+        val last = PrinterHub.lastAddress(context) ?: return@LaunchedEffect
+        // Try the saved printer a few times: it may be switching on or briefly out of reach.
+        repeat(4) {
+            val s = connection.state.value
+            if (s is PrinterConnection.State.Ready || s is PrinterConnection.State.Connecting) return@LaunchedEffect
+            if (hasBluetoothPermissions(context) && connection.bluetoothEnabled && connection.connect(last).isSuccess) return@LaunchedEffect
+            delay(3_000)
+        }
     }
     LaunchedEffect(ready) {
         while (ready) {
             connection.refreshStatus()
+            connection.refreshBattery()
             delay(5_000)
         }
     }
@@ -110,6 +119,11 @@ fun PrinterHomeScreen(
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             Row(Modifier.padding(start = 6.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Ink) }
+                Spacer(Modifier.weight(1f))
+                if (ready) BatteryBadge(battery, status?.lowBattery == true)
+                Spacer(Modifier.size(8.dp))
+                BluetoothBadge(state, onClick = { if (ready) connection.disconnect() else onOpenScan() })
+                Spacer(Modifier.size(14.dp))
             }
             Column(Modifier.padding(horizontal = 26.dp).padding(bottom = 6.dp)) {
                 Text("Mini Printer", color = Ink, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
@@ -122,28 +136,6 @@ fun PrinterHomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    ConnectionCard(
-                        state = state,
-                        status = status,
-                        onConnect = onOpenScan,
-                        onDisconnect = { connection.disconnect() },
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Color.White.copy(alpha = 0.78f)).padding(16.dp)) {
-                        Text("Print darkness", color = Ink, fontWeight = FontWeight.SemiBold)
-                        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            for (d in CatProtocol.Density.entries) {
-                                FilterChip(
-                                    selected = density == d,
-                                    onClick = { density = d; PrinterHub.setDensity(context, d) },
-                                    label = { Text(d.label) },
-                                )
-                            }
-                        }
-                    }
-                }
                 gridItems(tools, key = { it.route }) { tool ->
                     Column(
                         Modifier
@@ -169,62 +161,44 @@ fun PrinterHomeScreen(
     }
 }
 
+/** A small corner icon: teal Bluetooth when connected, grey crossed-out when not. Tap to connect or disconnect. */
 @Composable
-private fun ConnectionCard(
-    state: PrinterConnection.State,
-    status: CatProtocol.Status?,
-    onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
-) {
-    val ready = state as? PrinterConnection.State.Ready
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Color.White.copy(alpha = 0.85f)).padding(18.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(if (ready != null) Teal.copy(alpha = 0.18f) else Color(0xFFE6E6E6)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    if (ready != null) Icons.Filled.Print else Icons.Filled.BluetoothDisabled,
-                    contentDescription = null,
-                    tint = if (ready != null) Teal else Color(0xFF888888),
-                )
-            }
-            Column(Modifier.padding(start = 14.dp).weight(1f)) {
-                Text(
-                    when (state) {
-                        is PrinterConnection.State.Ready -> state.name
-                        PrinterConnection.State.Connecting -> "Connecting…"
-                        is PrinterConnection.State.Failed -> "Couldn't connect"
-                        else -> "No printer connected"
-                    },
-                    color = Ink,
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                val sub = when {
-                    state is PrinterConnection.State.Failed -> state.message
-                    ready != null && status != null -> when {
-                        status.paperOut -> "Out of paper"
-                        status.overheated -> "Too hot — let it cool"
-                        status.lowBattery -> "Battery low"
-                        else -> "Ready"
-                    }
-                    ready != null -> "Ready"
-                    else -> "Tap Connect to find your printer"
-                }
-                Text(sub, color = Ink.copy(alpha = 0.65f), style = MaterialTheme.typography.bodySmall)
-            }
-            if (state is PrinterConnection.State.Connecting) {
-                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-            }
+private fun BluetoothBadge(state: PrinterConnection.State, onClick: () -> Unit) {
+    val ready = state is PrinterConnection.State.Ready
+    Box(
+        Modifier.size(40.dp).clip(CircleShape)
+            .background(if (ready) Teal.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.7f))
+            .clickable(enabled = state !is PrinterConnection.State.Connecting, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (state is PrinterConnection.State.Connecting) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(
+                if (ready) Icons.Filled.Bluetooth else Icons.Filled.BluetoothDisabled,
+                contentDescription = if (ready) "Connected — tap to disconnect" else "Not connected — tap to connect",
+                tint = if (ready) Teal else Color(0xFF888888),
+                modifier = Modifier.size(22.dp),
+            )
         }
-        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (ready != null) {
-                OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
-            } else {
-                Button(onClick = onConnect, enabled = state !is PrinterConnection.State.Connecting) { Text("Connect") }
-            }
-        }
+    }
+}
+
+/** The printer's charge: an icon, with the percentage when the printer reports one. */
+@Composable
+private fun BatteryBadge(percent: Int?, low: Boolean) {
+    val warn = low || (percent != null && percent <= 15)
+    Row(
+        Modifier.height(40.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.7f)).padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (warn) Icons.Filled.BatteryAlert else Icons.Filled.BatteryFull,
+            contentDescription = "Battery",
+            tint = if (warn) Color(0xFFD9534F) else Teal,
+            modifier = Modifier.size(22.dp),
+        )
+        if (percent != null) Text("$percent%", color = Ink, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 2.dp))
     }
 }
 
