@@ -26,7 +26,7 @@ private val LightColors = lightColorScheme(
 )
 
 @Composable
-fun Mijia4kTheme(
+fun MyHomeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Off by default: dynamic color pulls from the phone's wallpaper, which
     // would override the stock app's consistent teal accent with whatever

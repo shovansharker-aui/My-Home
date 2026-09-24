@@ -4,16 +4,14 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Lens ring -->
+    <path
+        android:fillColor="#FF000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="4"
+        android:strokeLineJoin="round"
+        android:pathData="M54,25L86,55L22,55Z" />
     <path
         android:fillColor="#FF000000"
         android:fillType="evenOdd"
-        android:pathData="M54,54m-31,0a31,31 0,1 1,62 0a31,31 0,1 1,-62 0M54,54m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
-    <!-- Scene inside the glass -->
-    <path android:fillColor="#FF000000" android:pathData="M64,43m-5.5,0a5.5,5.5 0,1 1,11 0a5.5,5.5 0,1 1,-11 0" />
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M30.6,62C38,51 44,48 50,53C56,58 62,46 70,49C74,51 76,55 77.4,56L77.4,66C68,66 60,68 54,66C46,64 38,66 31,68Z" />
-    <!-- Recording dot -->
-    <path android:fillColor="#FF000000" android:pathData="M76,32m-4.2,0a4.2,4.2 0,1 1,8.4 0a4.2,4.2 0,1 1,-8.4 0" />
+        android:pathData="M34,55h40a4,4 0,0 1,4 4v20a4,4 0,0 1,-4 4h-40a4,4 0,0 1,-4 -4v-20a4,4 0,0 1,4 -4zM43,61h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2zM59,61h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2zM43,72h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2zM59,72h6a2,2 0,0 1,2 2v4a2,2 0,0 1,-2 2h-6a2,2 0,0 1,-2 -2v-4a2,2 0,0 1,2 -2z" />
 </vector>

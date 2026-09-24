@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="66dp"
+    android:height="66dp"
+    android:viewportWidth="66"
+    android:viewportHeight="66">
+    <!-- Paper feeding out of the front, with a few printed lines -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M19,36h28v20l-4,-3l-4,3l-4,-3l-4,3l-4,-3l-4,3z" />
+    <path android:fillColor="#FFB9C7D0" android:pathData="M23,42h20v2h-20zM23,47h14v2h-14z" />
+    <!-- Paper going in at the top -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M22,9h22a2,2 0,0 1,2 2v17h-26v-17a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#FFB9C7D0" android:pathData="M26,14h14v2h-14zM26,19h10v2h-10z" />
+    <!-- Body -->
+    <path android:fillColor="#FF3F5A69" android:pathData="M14,26h38a5,5 0,0 1,5 5v10a5,5 0,0 1,-5 5h-38a5,5 0,0 1,-5 -5v-10a5,5 0,0 1,5 -5z" />
+    <path android:fillColor="#FF2C3F49" android:pathData="M16,31h34v3h-34z" />
+    <path android:fillColor="#FF00BFA5" android:pathData="M47,39m-2.4,0a2.4,2.4 0,1 1,4.8 0a2.4,2.4 0,1 1,-4.8 0" />
+</vector>

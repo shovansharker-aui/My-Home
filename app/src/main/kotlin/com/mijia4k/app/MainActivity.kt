@@ -8,8 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
 import com.mijia4k.app.ui.AppOrientation
-import com.mijia4k.app.ui.Mijia4kNavHost
-import com.mijia4k.app.ui.theme.Mijia4kTheme
+import com.mijia4k.app.ui.AppNavHost
+import com.mijia4k.app.ui.theme.MyHomeTheme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -39,10 +39,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Mijia4kApp() {
-    Mijia4kTheme {
+    MyHomeTheme {
         // No Scaffold here: every screen already has its own, and wrapping
         // them in a second one applied the system-bar insets twice — that was
         // the oversized gap above each screen's title.
-        Mijia4kNavHost(rememberNavController())
+        AppNavHost(rememberNavController())
     }
 }

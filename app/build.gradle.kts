@@ -11,8 +11,8 @@ android {
         applicationId = "com.mijia4k.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.18.0"
+        versionCode = 19
+        versionName = "1.0.0"
     }
 
     // AGP's default ~/.android/debug.keystore is unique per machine, so a
@@ -85,5 +85,6 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.coil.video)
+    implementation(libs.zxing.core)
     debugImplementation(libs.androidx.ui.tooling)
 }
