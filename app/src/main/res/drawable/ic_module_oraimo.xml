@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="66dp"
+    android:height="66dp"
+    android:viewportWidth="66"
+    android:viewportHeight="66">
+    <!-- Charging case -->
+    <path android:fillColor="#FF3F5A69" android:pathData="M14,36h38a6,6 0,0 1,6 6v6a10,10 0,0 1,-10 10h-30a10,10 0,0 1,-10 -10v-6a6,6 0,0 1,6 -6z" />
+    <path android:fillColor="#FF2C3F49" android:pathData="M14,36h38v3h-38z" />
+    <path android:fillColor="#FF00BFA5" android:pathData="M33,46m-2.2,0a2.2,2.2 0,1 1,4.4 0a2.2,2.2 0,1 1,-4.4 0" />
+    <!-- Two earbuds resting in it -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M21,14m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M26,17h-4v18h4z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M45,14m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M44,17h-4v18h4z" />
+    <path android:fillColor="#FFB9C7D0" android:pathData="M21,14m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+    <path android:fillColor="#FFB9C7D0" android:pathData="M45,14m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+</vector>

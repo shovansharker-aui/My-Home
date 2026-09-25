@@ -5,6 +5,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import com.myhome.app.modules.mijia.MijiaCameraModule
 import com.myhome.app.modules.led.LedModule
+import com.myhome.app.modules.oraimo.OraimoModule
 import com.myhome.app.modules.printer.PrinterModule
 
 /**
@@ -36,5 +37,6 @@ object ModuleRegistry {
         MijiaCameraModule,
         PrinterModule,
         LedModule,
+        OraimoModule,
     )
 }

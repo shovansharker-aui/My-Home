@@ -21,7 +21,22 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -40,6 +55,28 @@ private val Ink = Color(0xFF3F5A69)
 /** The shell's front page: a greeting and one tile per installed module. */
 @Composable
 fun HomeScreen(modules: List<HomeModule>, onOpenModule: (HomeModule) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var order by remember { mutableStateOf(ModuleOrder.load(context)) }
+    var reorganizing by remember { mutableStateOf(false) }
+    val ordered = ModuleOrder.apply(modules, order)
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text("Settings", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(28.dp, 40.dp, 28.dp, 16.dp))
+                NavigationDrawerItem(
+                    label = { Text("Reorganize modules") },
+                    icon = { Icon(Icons.Filled.SwapVert, contentDescription = null) },
+                    selected = false,
+                    onClick = { scope.launch { drawerState.close() }; reorganizing = true },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+        },
+    ) {
     Box(
         Modifier
             .fillMaxSize()
@@ -70,13 +107,28 @@ fun HomeScreen(modules: List<HomeModule>, onOpenModule: (HomeModule) -> Unit) {
                         modifier = Modifier.padding(start = 6.dp, bottom = 2.dp),
                     )
                 }
-                items(modules, key = { it.id }) { module ->
+                items(ordered, key = { it.id }) { module ->
                     ModuleCard(module, onClick = { onOpenModule(module) })
                 }
             }
         }
     }
+    if (reorganizing) {
+        ReorderScreen(
+            modules = ordered,
+            onMove = { index, delta ->
+                val ids = ordered.map { it.id }.toMutableList()
+                val to = (index + delta).coerceIn(0, ids.lastIndex)
+                ids.add(to, ids.removeAt(index))
+                order = ids
+                ModuleOrder.save(context, ids)
+            },
+            onDone = { reorganizing = false },
+        )
+    }
+    }
 }
+
 
 @Composable
 private fun ModuleCard(module: HomeModule, onClick: () -> Unit) {

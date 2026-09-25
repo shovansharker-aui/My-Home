@@ -67,6 +67,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.myhome.app.home.AutoConnectWhileOpen
+import com.myhome.app.home.rememberBluetoothEnabler
 import com.myhome.app.modules.printer.ble.PrinterConnection
 import com.myhome.app.modules.printer.ble.PrinterHub
 import com.myhome.app.modules.printer.protocol.CatProtocol
@@ -93,16 +95,14 @@ fun PrinterHomeScreen(
     val ready = state is PrinterConnection.State.Ready
 
     // Pick up where the last session left off.
-    LaunchedEffect(Unit) {
-        val last = PrinterHub.lastAddress(context) ?: return@LaunchedEffect
-        // Try the saved printer a few times: it may be switching on or briefly out of reach.
-        repeat(4) {
-            val s = connection.state.value
-            if (s is PrinterConnection.State.Ready || s is PrinterConnection.State.Connecting) return@LaunchedEffect
-            if (hasBluetoothPermissions(context) && connection.bluetoothEnabled && connection.connect(last).isSuccess) return@LaunchedEffect
-            delay(3_000)
-        }
-    }
+    var userOff by remember { mutableStateOf(false) }
+    AutoConnectWhileOpen(
+        paused = userOff,
+        canTry = { connection.state.value.let { it is PrinterConnection.State.Idle || it is PrinterConnection.State.Failed } },
+        target = { PrinterHub.lastAddress(context) },
+        connect = { connection.connect(it) },
+    )
+    val enableBluetooth = rememberBluetoothEnabler { if (PrinterHub.lastAddress(context) != null) userOff = false else onOpenScan() }
     LaunchedEffect(ready) {
         while (ready) {
             connection.refreshStatus()
@@ -122,7 +122,7 @@ fun PrinterHomeScreen(
                 Spacer(Modifier.weight(1f))
                 if (ready) BatteryBadge(battery, status?.lowBattery == true)
                 Spacer(Modifier.size(8.dp))
-                BluetoothBadge(state, onClick = { if (ready) connection.disconnect() else onOpenScan() })
+                BluetoothBadge(state, onClick = { if (ready) { userOff = true; connection.disconnect() } else { userOff = false; enableBluetooth() } })
                 Spacer(Modifier.size(14.dp))
             }
             Column(Modifier.padding(horizontal = 26.dp).padding(bottom = 6.dp)) {

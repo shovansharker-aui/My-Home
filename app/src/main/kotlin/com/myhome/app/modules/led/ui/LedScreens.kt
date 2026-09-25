@@ -79,6 +79,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.myhome.app.home.AutoConnectWhileOpen
+import com.myhome.app.home.rememberBluetoothEnabler
 import com.myhome.app.modules.led.ble.LedConnection
 import com.myhome.app.modules.led.ble.LedHub
 import com.myhome.app.modules.led.protocol.BledomProtocol
@@ -131,16 +133,14 @@ fun LedControlScreen(onBack: () -> Unit, onOpenScan: () -> Unit) {
     }
 
     // Pick up where the last session left off.
-    LaunchedEffect(Unit) {
-        val last = LedHub.lastAddress(context) ?: return@LaunchedEffect
-        // Try the saved strip a few times: it may be switching on or briefly out of reach.
-        repeat(4) {
-            val s = connection.state.value
-            if (s is LedConnection.State.Ready || s is LedConnection.State.Connecting) return@LaunchedEffect
-            if (hasBluetoothPermissions(context) && connection.bluetoothEnabled && connection.connect(last).isSuccess) return@LaunchedEffect
-            delay(3_000)
-        }
-    }
+    var userOff by remember { mutableStateOf(false) }
+    AutoConnectWhileOpen(
+        paused = userOff,
+        canTry = { connection.state.value.let { it is LedConnection.State.Idle || it is LedConnection.State.Failed } },
+        target = { LedHub.lastAddress(context) },
+        connect = { connection.connect(it) },
+    )
+    val enableBluetooth = rememberBluetoothEnabler { if (LedHub.lastAddress(context) != null) userOff = false else onOpenScan() }
 
     Box(
         Modifier.fillMaxSize().background(
@@ -151,7 +151,7 @@ fun LedControlScreen(onBack: () -> Unit, onOpenScan: () -> Unit) {
             Row(Modifier.padding(start = 6.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Ink) }
                 Spacer(Modifier.weight(1f))
-                BluetoothBadge(state, onClick = { if (ready) connection.disconnect() else onOpenScan() })
+                BluetoothBadge(state, onClick = { if (ready) { userOff = true; connection.disconnect() } else { userOff = false; enableBluetooth() } })
                 Spacer(Modifier.size(14.dp))
             }
             Text(
