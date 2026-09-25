@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mijia4k.app"
+    namespace = "com.myhome.app"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.mijia4k.app"
+        applicationId = "com.myhome.app"
         minSdk = 26
         targetSdk = 36
         versionCode = 19

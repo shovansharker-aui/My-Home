@@ -12,7 +12,7 @@ The first module is the **Mijia 4K Camera** (Xiaomi `YDXJ01FM`), a full replacem
 
 ### Adding a module
 
-A module implements [`HomeModule`](app/src/main/kotlin/com/mijia4k/app/home/HomeModule.kt): an id, a title and one-line description for its tile, an icon, an entry route, and a `register` function that adds its own navigation graph. List it in `ModuleRegistry` and it appears on the home screen. See [`MijiaCameraModule`](app/src/main/kotlin/com/mijia4k/app/modules/mijia/MijiaCameraModule.kt) for a complete example.
+A module implements [`HomeModule`](app/src/main/kotlin/com/myhome/app/home/HomeModule.kt): an id, a title and one-line description for its tile, an icon, an entry route, and a `register` function that adds its own navigation graph. List it in `ModuleRegistry` and it appears on the home screen. See [`MijiaCameraModule`](app/src/main/kotlin/com/myhome/app/modules/mijia/MijiaCameraModule.kt) for a complete example.
 
 ## How the camera module talks to the camera
 

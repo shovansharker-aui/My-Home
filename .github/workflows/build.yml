@@ -51,7 +51,7 @@ jobs:
       - name: Upload debug APK (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: mijia4k-debug
+          name: my-home-debug
           path: app/build/outputs/apk/debug/*.apk
 
       # Every push to main republishes this rolling release so the latest

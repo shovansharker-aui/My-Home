@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Mijia4k"
+rootProject.name = "MyHome"
 include(":app")
