@@ -11,8 +11,8 @@ android {
         applicationId = "com.myhome.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.0.0"
+        versionCode = 21
+        versionName = "1.1.0"
     }
 
     // AGP's default ~/.android/debug.keystore is unique per machine, so a
@@ -86,5 +86,6 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     implementation(libs.coil.video)
     implementation(libs.zxing.core)
+    implementation(libs.libpag)
     debugImplementation(libs.androidx.ui.tooling)
 }
